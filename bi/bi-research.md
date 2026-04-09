@@ -495,9 +495,9 @@ graph TD
     FAST_AGENT --> REDIS
     FAST_AGENT --> PG
 
-    style NJS fill:#6bcb77,stroke:#333
+    style NJS fill:#6bcb77,stroke:#333,color:#333
     style FAST fill:#4F46E5,stroke:#333,color:#fff
-    style NGINX fill:#ffd93d,stroke:#333
+    style NGINX fill:#ffd93d,stroke:#333,color:#333
 ```
 
 | Responsibility | Service | Lý do |
@@ -578,17 +578,17 @@ graph TD
     end
 
     PLANNER --> |"Intent: SQL_QUERY"| SQL_AGENT
-    SQL_AGENT --> |"POST /v1/ask\n{question, mdl_hash}"| WREN_API
+    SQL_AGENT --> |"POST /v1/ask<br/>{question, mdl_hash}"| WREN_API
     WREN_API --> WREN_AI_SVC
     WREN_AI_SVC --> |"NL → SQL via MDL context"| WREN_ENGINE
     WREN_ENGINE --> |"MySQL protocol"| SR
-    WREN_API --> |"Response:\n{sql, data, columns}"| SQL_AGENT
+    WREN_API --> |"Response:<br/>{sql, data, columns}"| SQL_AGENT
 
     MDL --> WREN_ENGINE
     MDL --> WREN_AI_SVC
 
     style WREN_API fill:#059669,stroke:#333,color:#fff
-    style SR fill:#87ceeb,stroke:#333
+    style SR fill:#87ceeb,stroke:#333,color:#333
 ```
 
 #### 4.4.2. Connection Configuration
@@ -1776,32 +1776,32 @@ function DataFreshnessBadge() {
 
 ```mermaid
 graph TD
-    USER["👤 User Query\n'Doanh thu Q1 theo tháng?'"] --> PLANNER["🧠 Planner Agent\n(Intent + Plan)"]
+    USER["👤 User Query<br/>'Doanh thu Q1 theo tháng?'"] --> PLANNER["🧠 Planner Agent<br/>(Intent + Plan)"]
     
-    PLANNER --> |"Generate SQL/Python"| CODEGEN["📝 Code Generation\n(LLM output = CODE ONLY)"]
+    PLANNER --> |"Generate SQL/Python"| CODEGEN["📝 Code Generation<br/>(LLM output = CODE ONLY)"]
     
     CODEGEN --> REVIEW["🔍 Code Review Gate"]
     
-    REVIEW --> |"SQL"| SQL_EXEC["⚡ SQL Execution\n(StarRocks / Data Warehouse)"]
-    REVIEW --> |"Python"| PY_EXEC["⚡ Python Execution\n(K8s Pod Sandbox)"]
+    REVIEW --> |"SQL"| SQL_EXEC["⚡ SQL Execution<br/>(StarRocks / Data Warehouse)"]
+    REVIEW --> |"Python"| PY_EXEC["⚡ Python Execution<br/>(K8s Pod Sandbox)"]
     
-    SQL_EXEC --> RESULT["📊 Raw Result\n(Rows + Columns)"]
+    SQL_EXEC --> RESULT["📊 Raw Result<br/>(Rows + Columns)"]
     PY_EXEC --> RESULT
     
-    RESULT --> VALIDATE["✅ Result Validator\n- Schema check\n- Data type check\n- Row count sanity"]
+    RESULT --> VALIDATE["✅ Result Validator<br/>- Schema check<br/>- Data type check<br/>- Row count sanity"]
     
-    VALIDATE --> |"Pass"| RENDER["🎨 Visualization\n(ECharts)\nInput = EXECUTED DATA ONLY"]
-    VALIDATE --> |"Fail (max 3 retries)"| RETRY["🔄 Retry\n(Self-correct code)\nRetry 1: Fix code\nRetry 2: Simplify query\nRetry 3: Ask user"]
+    VALIDATE --> |"Pass"| RENDER["🎨 Visualization<br/>(ECharts)<br/>Input = EXECUTED DATA ONLY"]
+    VALIDATE --> |"Fail (max 3 retries)"| RETRY["🔄 Retry<br/>(Self-correct code)<br/>Retry 1: Fix code<br/>Retry 2: Simplify query<br/>Retry 3: Ask user"]
     RETRY --> |"retries < 3"| CODEGEN
-    RETRY --> |"retries >= 3"| FALLBACK["❌ Return Error\n+ Generated Code\n+ Error Explanation\nUser can edit & re-run"]
+    RETRY --> |"retries >= 3"| FALLBACK["❌ Return Error<br/>+ Generated Code<br/>+ Error Explanation<br/>User can edit & re-run"]
     
-    RENDER --> ARTIFACT["💾 Save to\nResult Artifact Store"]
-    ARTIFACT --> RESPOND["💬 Response to User\n- Chart/Table\n- Generated Code (transparent)\n- Data Source Lineage"]
+    RENDER --> ARTIFACT["💾 Save to<br/>Result Artifact Store"]
+    ARTIFACT --> RESPOND["💬 Response to User<br/>- Chart/Table<br/>- Generated Code (transparent)<br/>- Data Source Lineage"]
     
-    style CODEGEN fill:#ffd700,stroke:#333
-    style RESULT fill:#90ee90,stroke:#333
-    style RENDER fill:#87ceeb,stroke:#333
-    style ARTIFACT fill:#dda0dd,stroke:#333
+    style CODEGEN fill:#ffd700,stroke:#333,color:#333
+    style RESULT fill:#90ee90,stroke:#333,color:#333
+    style RENDER fill:#87ceeb,stroke:#333,color:#333
+    style ARTIFACT fill:#dda0dd,stroke:#333,color:#333
 ```
 
 ##### 5.7.1.3. Enforcement Mechanisms — 6 Lớp Bảo Vệ
@@ -1968,12 +1968,12 @@ class ExecutionGuard:
 ```mermaid
 graph TD
     subgraph "Query Processing Flow"
-        Q["👤 User Query"] --> HASH["🔑 Query Fingerprint\n(Semantic Hash)"]
+        Q["👤 User Query"] --> HASH["🔑 Query Fingerprint<br/>(Semantic Hash)"]
         HASH --> LOOKUP["🔍 Artifact Lookup"]
         
-        LOOKUP --> |"Cache HIT\n+ Data FRESH"| SERVE["⚡ Serve from Cache\n(< 100ms)"]
-        LOOKUP --> |"Cache HIT\n+ Data STALE"| REFRESH["🔄 Background Refresh\n+ Serve Stale"]
-        LOOKUP --> |"Cache MISS"| EXECUTE["🔧 Full Execution\nPipeline"]
+        LOOKUP --> |"Cache HIT<br/>+ Data FRESH"| SERVE["⚡ Serve from Cache<br/>(< 100ms)"]
+        LOOKUP --> |"Cache HIT<br/>+ Data STALE"| REFRESH["🔄 Background Refresh<br/>+ Serve Stale"]
+        LOOKUP --> |"Cache MISS"| EXECUTE["🔧 Full Execution<br/>Pipeline"]
         
         EXECUTE --> SAVE["💾 Save Artifact"]
         REFRESH --> SAVE
@@ -1981,22 +1981,22 @@ graph TD
     end
     
     subgraph "Result Artifact Store"
-        STORE --> META["📋 Metadata Layer\n(PostgreSQL)"]
-        STORE --> DATA["📊 Data Layer\n(S3/MinIO)"]
-        STORE --> VIZ["🎨 Visualization Layer\n(Pre-rendered Charts)"]
+        STORE --> META["📋 Metadata Layer<br/>(PostgreSQL)"]
+        STORE --> DATA["📊 Data Layer<br/>(S3/MinIO)"]
+        STORE --> VIZ["🎨 Visualization Layer<br/>(Pre-rendered Charts)"]
     end
     
     subgraph "Cache Invalidation"
-        PIPELINE["📡 Data Pipeline\n(dbt run complete)"] --> INVALIDATE["🗑️ Invalidate\nAffected Artifacts"]
+        PIPELINE["📡 Data Pipeline<br/>(dbt run complete)"] --> INVALIDATE["🗑️ Invalidate<br/>Affected Artifacts"]
         INVALIDATE --> META
     end
     
     subgraph "Reuse Scenarios"
         SERVE --> R1["Same user, same query"]
         SERVE --> R2["Different user, same query"]
-        SERVE --> R3["Similar query\n(semantic match)"]
-        SERVE --> R4["Scheduled report\n(pre-computed)"]
-        SERVE --> R5["Dashboard widget\n(pinned result)"]
+        SERVE --> R3["Similar query<br/>(semantic match)"]
+        SERVE --> R4["Scheduled report<br/>(pre-computed)"]
+        SERVE --> R5["Dashboard widget<br/>(pinned result)"]
     end
 ```
 
@@ -2224,16 +2224,16 @@ class QueryFingerprint:
 ```mermaid
 graph TD
     subgraph "Data Pipeline Events"
-        DBT_DONE["dbt run complete\n(Dagster event)"]
-        DBT_DONE --> CHANGED["Identify Changed Models\n- fct_revenue ✅ changed\n- dim_customers ❌ no change\n- fct_orders ✅ changed"]
+        DBT_DONE["dbt run complete<br/>(Dagster event)"]
+        DBT_DONE --> CHANGED["Identify Changed Models<br/>- fct_revenue ✅ changed<br/>- dim_customers ❌ no change<br/>- fct_orders ✅ changed"]
     end
     
     subgraph "Invalidation Logic"
-        CHANGED --> FIND["Find Artifacts\nWHERE source_tables\nOVERLAP changed_models"]
-        FIND --> MARK["Mark as STALE\n(is_stale = TRUE)"]
-        MARK --> PRECOMPUTE{{"Popular artifacts?\n(access_count > threshold)"}}
-        PRECOMPUTE --> |"Yes"| REFRESH["🔄 Background Refresh\n(Pre-compute popular results)"]
-        PRECOMPUTE --> |"No"| LAZY["😴 Lazy Refresh\n(Refresh on next access)"]
+        CHANGED --> FIND["Find Artifacts<br/>WHERE source_tables<br/>OVERLAP changed_models"]
+        FIND --> MARK["Mark as STALE<br/>(is_stale = TRUE)"]
+        MARK --> PRECOMPUTE{{"Popular artifacts?<br/>(access_count > threshold)"}}
+        PRECOMPUTE --> |"Yes"| REFRESH["🔄 Background Refresh<br/>(Pre-compute popular results)"]
+        PRECOMPUTE --> |"No"| LAZY["😴 Lazy Refresh<br/>(Refresh on next access)"]
     end
 ```
 
@@ -2352,37 +2352,37 @@ async def popular_artifacts(limit: int = Query(20)):
 
 ```mermaid
 graph TD
-    USER["👤 User: 'Doanh thu Q1 2026\ntheo tháng?'"] --> FP["🔑 Generate Query\nFingerprint"]
+    USER["👤 User: 'Doanh thu Q1 2026<br/>theo tháng?'"] --> FP["🔑 Generate Query<br/>Fingerprint"]
     
-    FP --> CACHE_CHECK{"🔍 Artifact\nStore Lookup"}
+    FP --> CACHE_CHECK{"🔍 Artifact<br/>Store Lookup"}
     
-    CACHE_CHECK --> |"HIT + FRESH"| FAST["⚡ Return Cached Result\n(< 100ms, $0 LLM cost)"]
+    CACHE_CHECK --> |"HIT + FRESH"| FAST["⚡ Return Cached Result<br/>(< 100ms, $0 LLM cost)"]
     
-    CACHE_CHECK --> |"HIT + STALE"| STALE["📊 Serve Stale Result\n+ Background Refresh"]
+    CACHE_CHECK --> |"HIT + STALE"| STALE["📊 Serve Stale Result<br/>+ Background Refresh"]
     
-    CACHE_CHECK --> |"MISS"| LLM["🧠 LLM: Generate Code\n(SQL/Python ONLY)"]
+    CACHE_CHECK --> |"MISS"| LLM["🧠 LLM: Generate Code<br/>(SQL/Python ONLY)"]
     
-    LLM --> PARSE["📋 Parse & Validate\nStructured Output"]
+    LLM --> PARSE["📋 Parse & Validate<br/>Structured Output"]
     
-    PARSE --> |"Has raw data\n(hallucinated)"| REJECT["❌ Reject & Retry\n'Must generate code,\nnot data'"]
+    PARSE --> |"Has raw data<br/>(hallucinated)"| REJECT["❌ Reject & Retry<br/>'Must generate code,<br/>not data'"]
     REJECT --> LLM
     
-    PARSE --> |"Has executable\ncode"| EXEC["⚡ Execute Code\n(StarRocks / K8s Pod Sandbox)"]
+    PARSE --> |"Has executable<br/>code"| EXEC["⚡ Execute Code<br/>(StarRocks / K8s Pod Sandbox)"]
     
-    EXEC --> VALIDATE["✅ Validate Result\n- Non-empty\n- Schema match\n- Reasonable values"]
+    EXEC --> VALIDATE["✅ Validate Result<br/>- Non-empty<br/>- Schema match<br/>- Reasonable values"]
     
-    VALIDATE --> |"Fail"| RETRY["🔄 Self-correct\nCode & Retry"]
+    VALIDATE --> |"Fail"| RETRY["🔄 Self-correct<br/>Code & Retry"]
     RETRY --> LLM
     
-    VALIDATE --> |"Pass"| VIZ["🎨 Generate\nVisualization"]
+    VALIDATE --> |"Pass"| VIZ["🎨 Generate<br/>Visualization"]
     
-    VIZ --> SAVE["💾 Save to\nArtifact Store"]
+    VIZ --> SAVE["💾 Save to<br/>Artifact Store"]
     
-    SAVE --> RESPOND["💬 Respond to User\n✅ Chart/Table\n📝 Generated Code\n🔗 Data Lineage\n💾 Artifact ID"]
+    SAVE --> RESPOND["💬 Respond to User<br/>✅ Chart/Table<br/>📝 Generated Code<br/>🔗 Data Lineage<br/>💾 Artifact ID"]
     
-    FAST --> RESPOND_CACHED["💬 Respond\n✅ Cached Result\n📌 'From cache, computed 5m ago'\n🔗 Source Lineage"]
+    FAST --> RESPOND_CACHED["💬 Respond<br/>✅ Cached Result<br/>📌 'From cache, computed 5m ago'<br/>🔗 Source Lineage"]
     
-    STALE --> RESPOND_STALE["💬 Respond\n✅ Stale Result\n⏳ 'Refreshing in background...'"]
+    STALE --> RESPOND_STALE["💬 Respond<br/>✅ Stale Result<br/>⏳ 'Refreshing in background...'"]
 ```
 
 #### 5.7.4. KPIs Đo Lường Data Integrity & Reusability
@@ -2898,24 +2898,24 @@ print(f"Growth trend: +{model.coef_[0]:,.0f}₫/tháng")
 graph TD
     USER["👤 User Query"] --> PLAN["🧠 Planner Agent"]
     
-    PLAN --> |"Câu hỏi aggregate\nđơn giản"| SQL_PATH["📊 SQL Path"]
-    PLAN --> |"Câu hỏi cần thống kê,\nML, phân tích phức tạp"| PY_PATH["🐍 Python Path"]
+    PLAN --> |"Câu hỏi aggregate<br/>đơn giản"| SQL_PATH["📊 SQL Path"]
+    PLAN --> |"Câu hỏi cần thống kê,<br/>ML, phân tích phức tạp"| PY_PATH["🐍 Python Path"]
     
     subgraph "SQL Path (nhanh, đơn giản)"
-        SQL_PATH --> WREN["Wren AI\nSemantic Layer"]
+        SQL_PATH --> WREN["Wren AI<br/>Semantic Layer"]
         WREN --> SQL_GEN["Generate SQL"]
-        SQL_GEN --> SQL_EXEC["Execute on\nStarRocks"]
+        SQL_GEN --> SQL_EXEC["Execute on<br/>StarRocks"]
     end
     
     subgraph "Python Path (linh hoạt, mạnh)"
-        PY_PATH --> PY_GEN["LLM Generate\nPython Code"]
-        PY_GEN --> SANDBOX["K8s Pod Sandbox\n(pandas, sklearn,\nplotly, etc.)"]
-        SANDBOX --> |"1. Query StarRocks\n(pd.read_sql)"| SQL_IN_PY["SQL trong Python\nvẫn lấy data từ DB!"]
-        SQL_IN_PY --> |"2. Process\n& Analyze"| COMPUTE["Statistical\nAnalysis"]
-        COMPUTE --> |"3. Visualize"| PY_VIZ["Generate\nChart"]
+        PY_PATH --> PY_GEN["LLM Generate<br/>Python Code"]
+        PY_GEN --> SANDBOX["K8s Pod Sandbox<br/>(pandas, sklearn,<br/>plotly, etc.)"]
+        SANDBOX --> |"1. Query StarRocks<br/>(pd.read_sql)"| SQL_IN_PY["SQL trong Python<br/>vẫn lấy data từ DB!"]
+        SQL_IN_PY --> |"2. Process<br/>& Analyze"| COMPUTE["Statistical<br/>Analysis"]
+        COMPUTE --> |"3. Visualize"| PY_VIZ["Generate<br/>Chart"]
     end
     
-    SQL_EXEC --> RESULT["📊 Verified Result\n(data từ DB)"]
+    SQL_EXEC --> RESULT["📊 Verified Result<br/>(data từ DB)"]
     PY_VIZ --> RESULT
     
     RESULT --> RESPOND["💬 Response to User"]
@@ -3082,30 +3082,30 @@ Dù đi theo đường SQL hay Python, user đều nhìn thấy kết quả vớ
 
 ```mermaid
 graph TD
-    T0["⏱️ 14:00:00\n👤 Khách mua hàng tại siêu thị\n📍 MongoDB Production\n💾 db.transactions.insertOne()"] --> T1["⏱️ 14:00:00\n📹 Oplog ghi lại thay đổi\n📍 MongoDB Change Streams\n🔑 clusterTime: 1743951600"]
+    T0["⏱️ 14:00:00<br/>👤 Khách mua hàng tại siêu thị<br/>📍 MongoDB Production<br/>💾 db.transactions.insertOne()"] --> T1["⏱️ 14:00:00<br/>📹 Oplog ghi lại thay đổi<br/>📍 MongoDB Change Streams<br/>🔑 clusterTime: 1743951600"]
     
-    T1 --> T2["⏱️ 14:05:02\n🚚 Airbyte sync job\n📍 Airbyte → StarRocks\n📦 47 rows transferred"]
+    T1 --> T2["⏱️ 14:05:02<br/>🚚 Airbyte sync job<br/>📍 Airbyte → StarRocks<br/>📦 47 rows transferred"]
     
-    T2 --> T3["⏱️ 14:05:04\n📦 Data vào Raw Layer\n📍 StarRocks: _airbyte_raw\n🏷️ JSON blob, chưa xử lý"]
+    T2 --> T3["⏱️ 14:05:04<br/>📦 Data vào Raw Layer<br/>📍 StarRocks: _airbyte_raw<br/>🏷️ JSON blob, chưa xử lý"]
     
-    T3 --> T4["⏱️ 14:08:00\n🔧 dbt run (Dagster trigger)\n📍 StarRocks: raw → staging\n🧹 Clean, JOIN, cast types"]
+    T3 --> T4["⏱️ 14:08:00<br/>🔧 dbt run (Dagster trigger)<br/>📍 StarRocks: raw → staging<br/>🧹 Clean, JOIN, cast types"]
     
-    T4 --> T5["⏱️ 14:08:15\n📊 dbt run tiếp\n📍 StarRocks: staging → marts\n📈 Pre-compute KPIs"]
+    T4 --> T5["⏱️ 14:08:15<br/>📊 dbt run tiếp<br/>📍 StarRocks: staging → marts<br/>📈 Pre-compute KPIs"]
     
-    T5 --> T6["⏱️ 14:08:20\n✅ dbt test pass\n📍 Dagster logs\n🧪 Data quality OK"]
+    T5 --> T6["⏱️ 14:08:20<br/>✅ dbt test pass<br/>📍 Dagster logs<br/>🧪 Data quality OK"]
     
-    T6 --> T7["⏱️ 14:08:25\n🔄 MV auto-refresh\n📍 StarRocks MV\n⚡ Aggregates updated"]
+    T6 --> T7["⏱️ 14:08:25<br/>🔄 MV auto-refresh<br/>📍 StarRocks MV<br/>⚡ Aggregates updated"]
     
-    T7 --> T8["⏱️ 14:08:30\n🧠 Wren AI aware of new data\n📍 Semantic Layer\n📖 Metrics ready to serve"]
+    T7 --> T8["⏱️ 14:08:30<br/>🧠 Wren AI aware of new data<br/>📍 Semantic Layer<br/>📖 Metrics ready to serve"]
     
-    T8 --> T9["⏱️ 14:10:00\n💬 User hỏi 'Doanh thu Q1?'\n📍 Chat UI\n🤖 Agent processes query"]
+    T8 --> T9["⏱️ 14:10:00<br/>💬 User hỏi 'Doanh thu Q1?'<br/>📍 Chat UI<br/>🤖 Agent processes query"]
     
-    T9 --> T10["⏱️ 14:10:03\n📊 Chart hiển thị\n📍 User's screen\n✅ Data from DB, not AI"]
+    T9 --> T10["⏱️ 14:10:03<br/>📊 Chart hiển thị<br/>📍 User's screen<br/>✅ Data from DB, not AI"]
     
     style T0 fill:#ff6b6b,stroke:#333,color:#fff
-    style T2 fill:#ffd93d,stroke:#333
-    style T4 fill:#6bcb77,stroke:#333
-    style T5 fill:#6bcb77,stroke:#333
+    style T2 fill:#ffd93d,stroke:#333,color:#333
+    style T4 fill:#6bcb77,stroke:#333,color:#333
+    style T5 fill:#6bcb77,stroke:#333,color:#333
     style T8 fill:#4d96ff,stroke:#333,color:#fff
     style T10 fill:#9b59b6,stroke:#333,color:#fff
 ```
@@ -3202,7 +3202,7 @@ graph TD
     REPORT --> |"share link / PDF"| VIEWER
 
     style CHART fill:#059669,stroke:#333,color:#fff
-    style DASH fill:#D97706,stroke:#333
+    style DASH fill:#D97706,stroke:#333,color:#fff
     style REPORT fill:#4F46E5,stroke:#333,color:#fff
 ```
 
@@ -3261,7 +3261,7 @@ graph TD
     SWITCH --> WIDGET
 
     style AI_INPUT fill:#6366F1,stroke:#333,color:#fff
-    style TRAD_TOOLBOX fill:#D97706,stroke:#333
+    style TRAD_TOOLBOX fill:#D97706,stroke:#333,color:#fff
     style WIDGET fill:#059669,stroke:#333,color:#fff
     style CANVAS fill:#059669,stroke:#333,color:#fff
 ```
@@ -3326,7 +3326,7 @@ graph TD
     end
 
     style AI_BTN fill:#6366F1,stroke:#333,color:#fff
-    style TRAD_BTN fill:#D97706,stroke:#333
+    style TRAD_BTN fill:#D97706,stroke:#333,color:#fff
     style CANVAS fill:#059669,stroke:#333,color:#fff
 ```
 
@@ -3473,7 +3473,7 @@ graph TD
     CHAT_ADD --> CHECK
 
     style P_CREATE fill:#6366F1,stroke:#333,color:#fff
-    style G_CREATE fill:#D97706,stroke:#333
+    style G_CREATE fill:#D97706,stroke:#333,color:#fff
     style ADD_DENY fill:#ff6b6b,stroke:#333,color:#fff
 ```
 
@@ -3501,7 +3501,7 @@ graph TD
     PUBLISH --> UC1_ALL["👥 Tất cả users xem<br/>< 50ms load time"]
 
     style AI fill:#6366F1,stroke:#333,color:#fff
-    style TRAD fill:#D97706,stroke:#333
+    style TRAD fill:#D97706,stroke:#333,color:#fff
     style UC1_ALL fill:#059669,stroke:#333,color:#fff
 ```
 
@@ -3731,9 +3731,9 @@ graph TD
     UC4_UI --> |"share/publish"| UC1_UI
 
     style UC1_UI fill:#059669,stroke:#333,color:#fff
-    style UC3_UI fill:#D97706,stroke:#333
+    style UC3_UI fill:#D97706,stroke:#333,color:#fff
     style UC4_UI fill:#4F46E5,stroke:#333,color:#fff
-    style PROXY fill:#6bcb77,stroke:#333
+    style PROXY fill:#6bcb77,stroke:#333,color:#333
 ```
 
 #### 6.0.8. KPIs — Visualization Quality (Updated)
@@ -3786,8 +3786,8 @@ graph TD
     C --> C1["• store data granular ở mức thấp nhất cần thiết<br/>• Aggregate on-the-fly bằng<br/>  columnar engine mạnh<br/>• Cache intelligent"]
     
     style A fill:#ff6b6b,stroke:#333,color:#fff
-    style B fill:#ffd93d,stroke:#333
-    style C fill:#6bcb77,stroke:#333
+    style B fill:#ffd93d,stroke:#333,color:#333
+    style C fill:#6bcb77,stroke:#333,color:#333
 ```
 
 #### 6.1.2. Giải Pháp: Grain-Based Tiered Computation
@@ -4091,20 +4091,20 @@ def warm_dashboard_cache(context):
 ```mermaid
 graph TD
     subgraph "Mode 1: Chat Q&A — UC2 (Reactive)"
-        M1["👤 User hỏi câu hỏi"] --> M1A["🤖 AI trả lời\n+ chart + insight"]
-        M1A --> M1B["💬 Kết quả trong\nchat thread"]
+        M1["👤 User hỏi câu hỏi"] --> M1A["🤖 AI trả lời<br/>+ chart + insight"]
+        M1A --> M1B["💬 Kết quả trong<br/>chat thread"]
     end
     
     subgraph "Mode 2: Dashboard Builder — UC3 (Proactive)"
-        M2["👤 User tạo Dashboard"] --> M2A["📊 Chọn/tạo widget\n(AI hỗ trợ)"]
-        M2A --> M2B["🏗️ Sắp xếp layout\ndrag-and-drop"]
-        M2B --> M2C["📌 Dashboard persisted\nauto-refresh"]
+        M2["👤 User tạo Dashboard"] --> M2A["📊 Chọn/tạo widget<br/>(AI hỗ trợ)"]
+        M2A --> M2B["🏗️ Sắp xếp layout<br/>drag-and-drop"]
+        M2B --> M2C["📌 Dashboard persisted<br/>auto-refresh"]
     end
     
     subgraph "Mode 3: Hybrid — UC2→UC3/UC4 Bridge"
         M3["👤 Hỏi trong chat"] --> M3A["📊 Nhận chart"]
-        M3A --> M3B["📌 Add to Dashboard\nhoặc Add to Report"]
-        M3B --> M3C["🏗️ Dashboard/Report\ntự động cập nhật"]
+        M3A --> M3B["📌 Add to Dashboard<br/>hoặc Add to Report"]
+        M3B --> M3C["🏗️ Dashboard/Report<br/>tự động cập nhật"]
     end
     
     style M1 fill:#6366F1,stroke:#333,color:#fff
@@ -4209,20 +4209,20 @@ Bước 5: Pin to dashboard (1 click)
 
 ```mermaid
 graph TD
-    CREATE["Tạo Widget Mới"] --> WAY1["🗣️ Cách 1: Natural Language\n'Vẽ chart doanh thu\ntheo tháng'"]
-    CREATE --> WAY2["📝 Cách 2: Template\nChọn từ gallery\nchart templates"]
-    CREATE --> WAY3["💬 Cách 3: Pin từ Chat\nHỏi trong chat\n→ Pin kết quả"]
+    CREATE["Tạo Widget Mới"] --> WAY1["🗣️ Cách 1: Natural Language<br/>'Vẽ chart doanh thu<br/>theo tháng'"]
+    CREATE --> WAY2["📝 Cách 2: Template<br/>Chọn từ gallery<br/>chart templates"]
+    CREATE --> WAY3["💬 Cách 3: Pin từ Chat<br/>Hỏi trong chat<br/>→ Pin kết quả"]
     
     WAY1 --> AI_PROC["🤖 AI Process"]
     WAY2 --> AI_PROC
     WAY3 --> AI_PROC
     
-    AI_PROC --> PREVIEW["👁️ Preview Widget\n+ Generated Code"]
+    AI_PROC --> PREVIEW["👁️ Preview Widget<br/>+ Generated Code"]
     
-    PREVIEW --> ADJUST{{"User\nĐiều chỉnh?"}}
+    PREVIEW --> ADJUST{{"User<br/>Điều chỉnh?"}}
     ADJUST --> |"'Đổi sang bar chart'"| REFINE["🔄 AI Refine"]
     REFINE --> PREVIEW
-    ADJUST --> |"Chấp nhận"| ADD["📌 Add to\nDashboard Grid"]
+    ADJUST --> |"Chấp nhận"| ADD["📌 Add to<br/>Dashboard Grid"]
 ```
 
 **Cách 1: Natural Language (chính)**
@@ -4363,28 +4363,28 @@ AI:   "Doanh thu T5 giảm 8.3% so với T4. Phân tích chi tiết:
 
 ```mermaid
 graph TD
-    CREATE["🆕 Create Widget\n(NL / Template / Pin)"] --> GENERATE["🤖 AI Generate\nSQL + Chart Config"]
+    CREATE["🆕 Create Widget<br/>(NL / Template / Pin)"] --> GENERATE["🤖 AI Generate<br/>SQL + Chart Config"]
     
-    GENERATE --> EXECUTE["⚡ Execute Code\n(StarRocks / K8s Pod Sandbox)"]
+    GENERATE --> EXECUTE["⚡ Execute Code<br/>(StarRocks / K8s Pod Sandbox)"]
     
-    EXECUTE --> PREVIEW["👁️ Preview\n(User review)"]
+    EXECUTE --> PREVIEW["👁️ Preview<br/>(User review)"]
     
-    PREVIEW --> |"Refine"| REFINE["🔄 AI Refine\n'Đổi chart type'\n'Thêm filter'\n'Thay color'"]
+    PREVIEW --> |"Refine"| REFINE["🔄 AI Refine<br/>'Đổi chart type'<br/>'Thêm filter'<br/>'Thay color'"]
     REFINE --> EXECUTE
     
-    PREVIEW --> |"Accept"| SAVE["💾 Save Widget\nStored: SQL + Config\n+ Result Artifact"]
+    PREVIEW --> |"Accept"| SAVE["💾 Save Widget<br/>Stored: SQL + Config<br/>+ Result Artifact"]
     
-    SAVE --> DASHBOARD["📊 Widget on\nDashboard Grid"]
+    SAVE --> DASHBOARD["📊 Widget on<br/>Dashboard Grid"]
     
-    DASHBOARD --> AUTO_REFRESH["⏰ Auto-Refresh\n(pipeline-driven)"]
+    DASHBOARD --> AUTO_REFRESH["⏰ Auto-Refresh<br/>(pipeline-driven)"]
     
-    AUTO_REFRESH --> |"dbt run complete\n→ data changed"| RE_EXECUTE["⚡ Re-execute\nSaved SQL"]
-    RE_EXECUTE --> UPDATE["📊 Widget Updated\n(silent refresh)"]
+    AUTO_REFRESH --> |"dbt run complete<br/>→ data changed"| RE_EXECUTE["⚡ Re-execute<br/>Saved SQL"]
+    RE_EXECUTE --> UPDATE["📊 Widget Updated<br/>(silent refresh)"]
     UPDATE --> AUTO_REFRESH
     
     DASHBOARD --> INTERACT["👤 User Interaction"]
     INTERACT --> |"Click data point"| DRILL["🔍 AI Drill-down"]
-    INTERACT --> |"Ask question"| CONTEXT["💬 Contextual AI\n(aware of visible data)"]
+    INTERACT --> |"Ask question"| CONTEXT["💬 Contextual AI<br/>(aware of visible data)"]
     INTERACT --> |"Edit widget"| REFINE
     
     style CREATE fill:#6366F1,stroke:#333,color:#fff
@@ -4664,7 +4664,7 @@ graph TD
     
     style GW fill:#059669,stroke:#333,color:#fff
     style LIDA fill:#4F46E5,stroke:#333,color:#fff
-    style ECHARTS fill:#D97706,stroke:#333
+    style ECHARTS fill:#D97706,stroke:#333,color:#fff
 ```
 
 #### 6.10.2. Detailed Analysis — Từng Tool
@@ -4703,7 +4703,7 @@ graph TD
     end
 
     style SERVER fill:#059669,stroke:#333,color:#fff
-    style PROXY fill:#6bcb77,stroke:#333
+    style PROXY fill:#6bcb77,stroke:#333,color:#333
 ```
 
 **Integration Example với Next.js + Server-Side Proxy:**
@@ -4938,8 +4938,8 @@ graph TD
         PROXY --> |"chart data ONLY<br/>{labels: [...], values: [...]}"| USER
     end
 
-    style PROXY fill:#6bcb77,stroke:#333
-    style AUTH fill:#ffd93d,stroke:#333
+    style PROXY fill:#6bcb77,stroke:#333,color:#333
+    style AUTH fill:#ffd93d,stroke:#333,color:#333
 ```
 
 **Key Security Controls:**
@@ -5036,7 +5036,7 @@ graph TD
     AGENT --> |"Answer + Chart"| CHAT
     
     style RBAC_PROXY fill:#ff6b6b,stroke:#333,color:#fff
-    style AUTH fill:#ffd93d,stroke:#333
+    style AUTH fill:#ffd93d,stroke:#333,color:#333
 ```
 
 **3 điểm enforcement RBAC trong Chat Path:**
@@ -5265,9 +5265,9 @@ graph TD
     API --> AUDIT
     AGENT --> AUDIT
     
-    style API fill:#6bcb77,stroke:#333
-    style SR fill:#87ceeb,stroke:#333
-    style AUTH fill:#ffd93d,stroke:#333
+    style API fill:#6bcb77,stroke:#333,color:#333
+    style SR fill:#87ceeb,stroke:#333,color:#333
+    style AUTH fill:#ffd93d,stroke:#333,color:#333
 ```
 
 
@@ -5647,7 +5647,7 @@ graph TD
         GRAFANA --> |"critical"| PAGER["PagerDuty / Email"]
     end
 
-    style GRAFANA fill:#D97706,stroke:#333
+    style GRAFANA fill:#D97706,stroke:#333,color:#fff
     style LANGFUSE fill:#4F46E5,stroke:#333,color:#fff
 ```
 
