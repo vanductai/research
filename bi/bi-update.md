@@ -6,7 +6,7 @@ Tôi đã đọc xong toàn bộ ~5500 dòng. Dưới đây là phân tích chi 
 
 ## Tóm tắt nhanh
 
-Tài liệu có chất lượng cao — nghiên cứu thị trường kỹ, quyết định kiến trúc có lý do rõ ràng. Tuy nhiên phát hiện **10 điểm mâu thuẫn** (3 nghiêm trọng) và **15 điểm có thể cải thiện**.
+Tài liệu có chất lượng cao — nghiên cứu thị trường kỹ, quyết định kiến trúc có lý do rõ ràng. Qua **4 lần rà soát toàn văn** đã phát hiện tổng cộng **33 điểm** cần xử lý: 6 🔴 Blocker/Critical, 9 🟠 High, 12 🟡 Medium, 6 🟢 Low.
 
 ---
 
@@ -557,6 +557,8 @@ Nhưng không có:
 | 🟠 **High** | Sandbox Timeout không được enforce — infinite loop risk | §5.6 | II |
 | 🟠 **High** | Graphic Walker integration thiếu RBAC + `translateGWSpecToSQL` | §6.10 | III |
 | 🟠 **High** | Cache stampede khi TTL expire — thiếu SWR pattern | §6.2 | III |
+| 🟠 **High** | Health check config dùng docker-compose format thay vì K8s probes | §9.7 | IV |
+| 🟠 **High** | Reconciliation dùng SQL syntax cho MongoDB source — phải dùng aggregation pipeline | §5.1.7 | IV |
 | 🟡 **Medium** | Auth Phase 4 — quá muộn | §8 | I |
 | 🟡 **Medium** | StarRocks không có backup native | §9.8 | I |
 | 🟡 **Medium** | K8s Pod pool pre-warming | §2.2 | I |
@@ -565,10 +567,197 @@ Nhưng không có:
 | 🟡 **Medium** | Wren AI cần RAG-based Semantic Retrieval (không load full MDL) | §4.4 | II |
 | 🟡 **Medium** | MDL versioning + zero-downtime deploy + rollback thiếu | §4.4.4 | III |
 | 🟡 **Medium** | BlockNote version pinning + contract test + monitoring strategy | §6.0.5 | III |
+| 🟡 **Medium** | Orchestrator naming — Dagster vs Airflow mâu thuẫn | §5.1.5 | IV |
+| 🟡 **Medium** | `mv_brand_performance` thiếu `customer_hll` — inconsistent với pattern MV khác | §5.5 | IV |
+| 🟡 **Medium** | Reconciliation SQL dùng PostgreSQL interval syntax trên StarRocks | §5.1.7 | IV |
+| 🟡 **Medium** | Thiếu idempotency guarantee cho cache warming pipeline | §6.2 | IV |
+| 🟡 **Medium** | Dashboard `queryTemplate` với `{{filter}}` placeholder chưa define escaping | §6.0.4 | IV |
 | 🟢 **Low** | Numbering section 5.7/5.6.x | §5.7 | I |
 | 🟢 **Low** | Code comment làm dict key trong WrenAIClient | §4.4.3 | I |
 | 🟢 **Low** | PostgreSQL RAM spec mâu thuẫn 8GB vs 4GB | §9.3.2/§9.6 | I |
 | 🟢 **Low** | Tên model LLM lỗi thời trong cost estimation | §9.3.1 | III |
+| 🟢 **Low** | Reconciliation `source_query` dùng SQL `INTERVAL '1 day'` — mâu thuẫn PostgreSQL vs StarRocks syntax | §5.1.7 | IV |
+| 🟢 **Low** | Version tracking V5.2 nằm sau V5.3 — sai thứ tự | Appendix A | IV |
+
+---
+
+## VIII. Điểm Bổ Sung Lần 4 (Rà soát cuối cùng toàn văn — Antigravity)
+
+Lần rà soát cuối cùng, đọc lại toàn bộ 5655 dòng `bi-research.md` với focus vào **cross-section consistency**, **format/syntax correctness**, và **implementation feasibility**. Phát hiện thêm **9 điểm** chưa được ghi nhận.
+
+---
+
+### 🟠 Lỗi Cross-Section Consistency
+
+#### A12. Health check configuration dùng docker-compose format thay vì K8s format (§9.7)
+
+**Vấn đề:** §9.7 (HA Strategy) đặt health check configuration dạng **docker-compose** (`healthcheck:`, `restart: unless-stopped`):
+```yaml
+services:
+  starrocks-fe:
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
+      interval: 10s
+  fastapi:
+    restart: unless-stopped
+```
+Nhưng §2.2/§9.6 xác nhận rõ: **hệ thống deploy trên K8s, KHÔNG có Docker Compose phase**. K8s dùng `livenessProbe` / `readinessProbe` trong Pod spec, KHÔNG dùng `healthcheck` docker-compose syntax.
+
+**Hậu quả:** Config này không thể apply trực tiếp lên K8s — cần chuyển sang K8s probe format. Dev team copy-paste sẽ bị confuse.
+
+**Fix:** Chuyển sang K8s pod spec format:
+```yaml
+livenessProbe:
+  exec:
+    command: ["mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  exec:
+    command: ["mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
+  periodSeconds: 5
+```
+
+---
+
+#### A13. Pipeline orchestrator naming mâu thuẫn: Dagster vs Airflow (§5.1.5)
+
+**Vấn đề:** §5.1.5 Pipeline Orchestration diagram viết:
+```
+SCHEDULE["⏰ Dagster / Airflow\nScheduler"]
+```
+Nhưng toàn bộ document (§4.2, §4.6, §5.1.6, §9.6) đã xác nhận **chỉ dùng Dagster**, KHÔNG dùng Airflow. Airflow không xuất hiện trong tech stack, không có MCP server, không có trong deployment table.
+
+**Hậu quả:** Gây confusion — Airflow có được consider hay không? Nếu không, nên xóa.
+
+**Fix:** Đổi thành `SCHEDULE["⏰ Dagster\nScheduler"]`.
+
+---
+
+#### A14. `mv_brand_performance` thiếu `customer_hll` — không nhất quán với pattern MV khác (§5.5)
+
+**Vấn đề:** Trong 3 MV được define:
+- `mv_monthly_region`: ✅ Có `HLL_UNION_AGG(f.customer_hll) AS customer_hll`
+- `mv_daily_store`: ❌ Dùng sai `SUM(f.customer_count)` (đã report M1)
+- `mv_brand_performance`: **Hoàn toàn không có customer metric nào** — không có `customer_hll` cũng không có `customer_count`
+
+Nếu marketing team cần xem "số khách unique mua brand X" → phải query `fct_sales_daily` trực tiếp, MV không cover.
+
+**Đề xuất:** Thêm `HLL_UNION_AGG(f.customer_hll) AS customer_hll` vào `mv_brand_performance` để đồng nhất với các MV khác, đáp ứng use case marketing phân tích customer reach per brand.
+
+---
+
+### 🟡 Cải Tiến Feasibility & Data Logic
+
+#### A15. Reconciliation `source_query` dùng SQL syntax cho MongoDB source (§5.1.7)
+
+**Vấn đề:** A6 đã chỉ ra `source_db: "production_pg"` sai. Nhưng ngoài việc sửa tên DB, **SQL query trong `source_query` cũng không thể chạy trên MongoDB**:
+```python
+"source_query": """
+    SELECT COUNT(*) as cnt 
+    FROM production.orders 
+    WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
+""",
+```
+MongoDB không hỗ trợ SQL syntax này. MongoDB cần aggregation pipeline:
+```python
+db.orders.aggregate([
+    {"$match": {"created_at": {"$gte": ISODate("...")}}},
+    {"$count": "cnt"}
+])
+```
+
+**Đề xuất:** Reconciliation pipeline cần 2 query formats:
+1. **MongoDB queries**: Dùng PyMongo aggregation pipeline
+2. **StarRocks queries**: Dùng SQL (đã có)
+
+Hoặc (approach đơn giản hơn): So sánh `_airbyte_raw` count trong StarRocks vs `raw_*` table count — cả 2 đều SQL, tránh phải kết nối trực tiếp MongoDB production.
+
+---
+
+#### A16. Reconciliation target query dùng PostgreSQL interval syntax `INTERVAL '1 day'` trên StarRocks (§5.1.7)
+
+**Vấn đề:** Cả `source_query` và `target_query` dùng:
+```sql
+WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'  -- PostgreSQL syntax
+```
+StarRocks dùng MySQL syntax: `INTERVAL 1 DAY` (không có dấu ngoặc đơn, viết hoa `DAY`).
+
+Đáng chú ý, document đã nhận thức vấn đề này trong `target_query` (dùng `INTERVAL 1 DAY` đúng), nhưng `source_query` vẫn dùng sai format.
+
+**Fix:** Thống nhất format StarRocks: `CURRENT_DATE - INTERVAL 1 DAY`.
+
+---
+
+#### A17. Cache warming pipeline thiếu idempotency guarantee (§6.2)
+
+**Vấn đề:** `warm_dashboard_cache()` chạy sau mỗi dbt run. Nhưng nếu:
+1. dbt run A hoàn thành → trigger cache warm A
+2. dbt run B hoàn thành 2 phút sau → trigger cache warm B
+3. Cache warm A chưa xong → Cache warm B bắt đầu chạy song song
+
+Hai cache warm chạy đồng thời có thể gây:
+- Race condition trong Redis (set/get overlap)
+- Double StarRocks query load (cùng 1 combo được query 2 lần)
+
+**Đề xuất:** Thêm distributed lock cho cache warming:
+```python
+lock = redis.lock("cache_warm:lock", timeout=300)
+if lock.acquire(blocking=False):
+    try:
+        warm_dashboard_cache(context)
+    finally:
+        lock.release()
+else:
+    context.log.info("Another cache warming is in progress, skipping.")
+```
+
+---
+
+#### A18. Dashboard widget `queryTemplate` với `{{filter}}` placeholder chưa define escaping strategy (§6.0.4)
+
+**Vấn đề:** `DashboardWidget.queryConfig.queryTemplate` được define là:
+```typescript
+queryTemplate?: string;  // SQL template with {{filter}} placeholders
+```
+Nhưng không document rõ:
+1. Template engine nào render `{{filter}}`? (Handlebars? Custom parser? Server-side only?)
+2. Escaping: Nếu template chứa `{{region}}` và user input là `'; DROP TABLE --` → cần escaping layer
+3. `queryTemplate` có override `metrics`/`dimensions` hay là bổ sung?
+
+Đây là tiểm ẩn SQL injection nếu template rendering không an toàn.
+
+**Đề xuất:** Clarify rằng `queryTemplate` KHÔNG dùng string interpolation cho filters. Thay vào đó, `queryTemplate` là base SQL, và filter values được inject bằng parameterized queries tại Query Proxy (giống pattern §6.2 `buildRevenueTrendQuery`). Xóa `{{filter}}` notation để tránh gây hiểu lầm.
+
+---
+
+### 🟢 Improvements nhỏ
+
+#### A19. Version tracking trong Appendix A có thứ tự sai: v5.2 nằm sau v5.3 (Appendix)
+
+**Vấn đề:** Trong Version Tracking table, v5.3 (dòng 5649) nằm **trước** v5.2 (dòng 5650):
+```
+| v5.3 | 2026-04-08 | **MCP INTEGRATION STRATEGY** — ... |
+| v5.2 | 2026-04-08 | **MongoDB PRIMARY correction** — ... |
+```
+Version 5.2 nên nằm trước 5.3 theo semantic versioning order.
+
+**Fix:** Đổi thứ tự cho đúng: v5.0 → v5.1 → v5.2 → v5.3.
+
+---
+
+#### A20. `mv_monthly_revenue` trong Data Journey (§5.8 chặng 7) không khớp tên MV defined (§5.5)
+
+**Vấn đề:** §5.8 chặng 7 tạo MV tên `mv_monthly_revenue`:
+```sql
+CREATE MATERIALIZED VIEW mv_monthly_revenue
+```
+Nhưng §5.5 define MV chính tên `mv_monthly_region` (bao gồm nhiều dimension hơn: region, province, category, brand). `mv_monthly_revenue` không tồn tại trong catalog MV ở §5.5.
+
+**Hậu quả:** Inconsistency nhỏ nhưng gây confusion khi implement — dev không biết nên tạo `mv_monthly_revenue` riêng hay dùng `mv_monthly_region`.
+
+**Fix:** Trong §5.8 chặng 7, đổi tên thành `mv_monthly_region` hoặc document rõ rằng `mv_monthly_revenue` là simplified example cho Data Journey walkthrough.
 
 ---
 
@@ -579,3 +768,4 @@ Nhưng không có:
 | 1.0.0 | 2026-04-09 | Claude Code Core | Khởi tạo tài liệu phân tích sâu, tìm ra 10 mâu thuẫn và 15 điểm cải tiến. |
 | 1.1.0 | 2026-04-09 | Antigravity | Rà soát chéo (Cross-review), bổ sung 4 lỗ hổng nghiêm trọng (Cache Logic, Sandbox Timeout, LLM Context Bloat, Schema RAG) và cập nhật Version Tracking. |
 | 1.2.0 | 2026-04-09 | Antigravity | Rà soát toàn văn lần 3 (đọc lại toàn bộ 5655 dòng bi-research.md), bổ sung 7 điểm mới (A5–A11): fct_revenue HLL bug, reconciliation source DB sai, SWR cache stampede, GW RBAC gap, MDL versioning, BlockNote pinning, LLM model naming. Cập nhật bảng tổng hợp ưu tiên đầy đủ. |
+| 1.3.0 | 2026-04-09 | Antigravity | Rà soát cuối cùng lần 4 — đọc lại toàn bộ 5655 dòng bi-research.md với focus cross-section consistency, format/syntax correctness, implementation feasibility. Bổ sung 9 điểm (A12–A20): health check format sai (docker-compose→K8s), Dagster/Airflow naming conflict, mv_brand_performance thiếu customer_hll, reconciliation SQL cho MongoDB, interval syntax PostgreSQL vs StarRocks, cache warm idempotency, queryTemplate injection risk, version tracking order, MV naming inconsistency. Tổng cộng: **33 điểm** đã phát hiện qua 4 lần rà soát. |

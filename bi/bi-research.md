@@ -433,7 +433,7 @@ graph TD
 | **Text-to-SQL** | Wren AI Engine (Semantic Layer) | MDL-based accuracy, không hallucination |
 | **Python Analysis** | LLM-generated code trong K8s Pod Sandbox | Code generation + execution (pandas, sklearn, plotly pre-installed) |
 | **Code Sandbox** | K8s Pod Sandbox (self-hosted) | Secure, on-premise ephemeral pods, K8s NetworkPolicy isolation |
-| **LLM** | GPT-4o / Claude Sonnet 4 / Gemini 2.5 | Multi-model support, hybrid routing (Flash cho simple, Pro cho complex) |
+| **LLM** | gpt-4o / claude-sonnet-4-5 / gemini-2.5-flash | Multi-model support, hybrid routing (Flash cho simple, Pro cho complex) |
 | **Vector DB** | ChromaDB (dev) → Qdrant (prod) | RAG cho schema & query matching |
 | **OLAP Database** | StarRocks | MPP analytics engine, MySQL-compatible |
 | **Database** | PostgreSQL | Session, user, metadata storage |
@@ -554,6 +554,8 @@ graph TD
 
 > [!IMPORTANT]
 > **Wren AI là "phiên dịch viên" giữa business terms và SQL.** Section này chi tiết cách Wren AI connect với StarRocks, cách LangGraph gọi Wren AI, và fallback khi Wren AI không khả dụng.
+>
+> **Lưu ý về Context Window**: Với 300+ tables và hàng nghìn metrics/dimensions, Wren AI **PHẢI** chạy trong chế độ **RAG-based Semantic Retrieval** — phân mảnh MDL thành vectors, khi có câu hỏi chỉ retrieve context liên quan (ví dụ: hỏi về "Sales" → chỉ nạp `fct_sales` + `dim_product`). Nếu nạp toàn bộ MDL vào prompt, context window sẽ bị phá vỡ và chi phí đội lên gấp nhiều lần.
 
 #### 4.4.1. Connection Architecture
 
@@ -633,9 +635,9 @@ class WrenAIClient:
         Gửi NL question tới Wren AI → nhận SQL + kết quả.
         Wren AI sẽ dùng MDL context để generate SQL chính xác.
         """
+        # Wren AI tự động dùng MDL để map business terms → SQL
         response = await httpx.post(f"{self.base_url}/v1/ask", json={
-            "question": question,
-            "# Wren AI tự động dùng MDL để map business terms → SQL"
+            "question": question
         })
         return WrenResponse(**response.json())
     
@@ -664,12 +666,33 @@ class WrenAIClient:
 > [!WARNING]
 > **MDL phải luôn đồng bộ với dbt models.** Nếu dbt thêm/xóa/đổi tên column mà MDL không cập nhật → Wren AI generate SQL sai.
 
-| Trigger | Action | Automation Level |
-|:--------|:-------|:----------------|
-| **dbt model thêm column mới** | Cập nhật MDL: thêm column description | 🟡 Semi-auto: script detect schema changes, tạo PR cho review |
-| **dbt model đổi tên table** | Cập nhật MDL: sửa `table_ref` | 🟡 Semi-auto: CI check MDL references vs dbt manifest |
-| **Business metric thay đổi** | Cập nhật MDL: sửa metric expression | 🔴 Manual: data team review + approve |
-| **Wren AI MDL deploy** | Restart Wren AI Service để reload MDL | 🟢 Auto: Dagster trigger after MDL file change |
+| Trigger | Action | Automation Level | Owner |
+|:--------|:-------|:----------------|:------|
+| **dbt model thêm column mới** | Cập nhật MDL: thêm column description | 🟡 Semi-auto: script detect schema changes, tạo PR cho review | Data Engineer |
+| **dbt model đổi tên table** | Cập nhật MDL: sửa `table_ref` | 🟡 Semi-auto: CI check MDL references vs dbt manifest | Data Engineer |
+| **Business metric thay đổi** | Cập nhật MDL: sửa metric expression | 🔴 Manual: RFC → PR → Review → Deploy (xem Change Control Process bên dưới) | Data Team Lead + Domain Owner |
+| **Wren AI MDL deploy** | Hot-reload hoặc blue/green deploy (xem Versioning Strategy bên dưới) | 🟢 Auto: Dagster trigger after MDL file change | DevOps |
+
+**MDL Change Control Process:**
+
+> [!CAUTION]
+> MDL là "single source of truth" cho metric definitions. Thay đổi MDL sai có thể làm toàn bộ NL→SQL generate sai cho 300-500 users.
+
+1. **RFC (Request for Change)**: Tạo PR trên Git mô tả thay đổi metric definition
+2. **Review**: Data Team Lead + Finance/domain owner approve
+3. **Staging deploy**: Deploy MDL mới lên Wren AI staging instance → chạy bộ test NL queries canonical (50 câu chuẩn) → verify accuracy
+4. **Production deploy**: Merge PR → Dagster trigger MDL deploy → notify tất cả dashboard owners
+5. **Rollback**: `git checkout <prev-tag> -- mdl.yaml && kubectl rollout restart wren-ai`
+
+**MDL Versioning Strategy:**
+
+| Aspect | Strategy |
+|:-------|:---------|
+| **Version control** | Git-versioned YAML + Git tag cho mỗi production deploy (e.g., `mdl-v1.2.0`) |
+| **Blue/Green deploy** | Giữ `MDL_v1` (production) và `MDL_v2` (staging). Switch traffic khi validated |
+| **Pre-deploy validation** | Automated test: 50 canonical NL queries → compare SQL output vs expected |
+| **Zero-downtime reload** | Wren AI hot-reload MDL config (nếu supported), hoặc rolling restart K8s pods |
+| **Rollback script** | `git checkout <prev-tag> -- mdl.yaml && kubectl rollout restart wren-ai` — RTO < 5 phút |
 
 ```python
 # Dagster asset: Validate MDL vs dbt schema
@@ -1204,7 +1227,7 @@ DuckDB rất tốt cho single-user analysis nhưng **không phù hợp** cho mul
 
 ```mermaid
 graph TD
-    SCHEDULE["⏰ Dagster / Airflow<br/>Scheduler"] --> SYNC["1️⃣ Airbyte Sync<br/>(CDC from all sources)"]
+    SCHEDULE["⏰ Dagster<br/>Scheduler"] --> SYNC["1️⃣ Airbyte Sync<br/>(CDC from all sources)"]
     SYNC --> |"Trigger on completion"| DBT_RUN["2️⃣ dbt run<br/>(Transform in StarRocks)"]
     DBT_RUN --> DBT_TEST["3️⃣ dbt test<br/>(Data quality checks)"]
     DBT_TEST --> |"Pass ✅"| NOTIFY_OK["Notify: Data Ready"]
@@ -1251,33 +1274,35 @@ def reconcile_data(context):
     reconciliation_checks = [
         {
             "name": "orders_row_count",
+            # So sánh _airbyte_raw (mirror 1:1 từ MongoDB) vs dbt raw trong StarRocks
+            # Approach: cả 2 queries đều chạy trên StarRocks → tránh kết nối trực tiếp MongoDB production
             "source_query": """
                 SELECT COUNT(*) as cnt 
-                FROM production.orders 
-                WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
+                FROM _airbyte_raw_orders 
+                WHERE DATE(_airbyte_emitted_at) >= CURRENT_DATE - INTERVAL 1 DAY
             """,
             "target_query": """
                 SELECT COUNT(*) as cnt 
                 FROM raw_orders 
                 WHERE DATE(created_at) >= CURRENT_DATE - INTERVAL 1 DAY
             """,
-            "source_db": "production_pg",
-            "target_db": "starrocks",
+            "source_db": "starrocks",  # _airbyte_raw tables = source-of-truth mirror
+            "target_db": "starrocks",  # dbt-transformed tables
         },
         {
             "name": "daily_revenue_sum",
             "source_query": """
-                SELECT COALESCE(SUM(total), 0) as total_revenue
-                FROM production.orders 
-                WHERE status NOT IN ('cancelled', 'refunded')
-                  AND DATE(created_at) = CURRENT_DATE - INTERVAL '1 day'
+                SELECT COALESCE(SUM(CAST(JSON_VALUE(data, '$.total') AS DECIMAL(15,2))), 0) as total_revenue
+                FROM _airbyte_raw_orders 
+                WHERE JSON_VALUE(data, '$.status') NOT IN ('cancelled', 'refunded')
+                  AND DATE(_airbyte_emitted_at) = CURRENT_DATE - INTERVAL 1 DAY
             """,
             "target_query": """
                 SELECT COALESCE(SUM(net_revenue), 0) as total_revenue
                 FROM fct_sales_daily 
                 WHERE date_key = CURRENT_DATE - INTERVAL 1 DAY
             """,
-            "source_db": "production_pg",
+            "source_db": "starrocks",
             "target_db": "starrocks",
         },
     ]
@@ -1625,7 +1650,7 @@ SELECT
     SUM(f.net_revenue)      AS net_revenue,
     SUM(f.order_count)      AS order_count,
     SUM(f.item_quantity)     AS item_quantity,
-    SUM(f.customer_count)   AS customer_count
+    HLL_UNION_AGG(f.customer_hll) AS customer_hll
 FROM fct_sales_daily f
 JOIN dim_store s ON f.store_key = s.store_key
 GROUP BY 
@@ -1646,7 +1671,8 @@ SELECT
     SUM(f.net_revenue)      AS net_revenue,
     SUM(f.gross_profit)     AS gross_profit,
     SUM(f.order_count)      AS order_count,
-    SUM(f.item_quantity)     AS item_quantity
+    SUM(f.item_quantity)     AS item_quantity,
+    HLL_UNION_AGG(f.customer_hll) AS customer_hll
 FROM fct_sales_daily f
 JOIN dim_date d ON f.date_key = d.date_key
 JOIN dim_product p ON f.product_key = p.product_key
@@ -1732,9 +1758,9 @@ function DataFreshnessBadge() {
 > [!CAUTION]
 > **Vấn đề cốt lõi**: Khi AI Agent tạo chart/table, nếu data được **LLM tự generate** (hallucinate) thay vì lấy từ database thực qua code/SQL, thì kết quả sẽ **sai lệch nghiêm trọng** — user tin tưởng một con số không có thật. Đồng thời, nếu mỗi lần user hỏi lại cùng một câu hỏi thì hệ thống phải chạy lại toàn bộ pipeline (LLM → SQL → Execute → Visualize), gây **lãng phí tài nguyên và chi phí LLM không cần thiết**.
 
-#### 5.6.1. Vấn Đề #1: Bảo Đảm Data Integrity — "Code-Verified Data Generation"
+#### 5.7.1. Vấn Đề #1: Bảo Đảm Data Integrity — "Code-Verified Data Generation"
 
-##### 5.6.1.1. Nguyên Tắc Thiết Kế
+##### 5.7.1.1. Nguyên Tắc Thiết Kế
 
 > [!IMPORTANT]
 > **Rule #1: ZERO Tolerance for LLM-Fabricated Data**
@@ -1746,7 +1772,7 @@ function DataFreshnessBadge() {
 > 
 > LLM **KHÔNG ĐƯỢC PHÉP** tự tạo data, ước tính số liệu, hoặc "đoán" giá trị.
 
-##### 5.6.1.2. Kiến Trúc Code-Verified Pipeline
+##### 5.7.1.2. Kiến Trúc Code-Verified Pipeline
 
 ```mermaid
 graph TD
@@ -1778,7 +1804,7 @@ graph TD
     style ARTIFACT fill:#dda0dd,stroke:#333
 ```
 
-##### 5.6.1.3. Enforcement Mechanisms — 5 Lớp Bảo Vệ
+##### 5.7.1.3. Enforcement Mechanisms — 6 Lớp Bảo Vệ
 
 | Layer | Mechanism | Mô tả | Đo lường |
 |:------|:----------|:------|:---------|
@@ -1815,9 +1841,11 @@ class GraduatedRetryStrategy:
                     
                 elif attempt == 2:
                     # Attempt 2: Self-correct — feed error back to LLM
+                    # Truncate error để tránh context bloat (stack trace có thể dài hàng nghìn token)
+                    truncated_error = truncate_and_summarize_error(last_error, max_lines=5)
                     result = await agent.generate_and_execute(
                         user_query,
-                        context=f"Previous attempt failed: {last_error}. "
+                        context=f"Previous attempt failed: {truncated_error}. "
                                 f"Fix the code and try a simpler approach."
                     )
                     
@@ -1857,7 +1885,7 @@ class GraduatedRetryStrategy:
         )
 ```
 
-##### 5.6.1.4. Prompt Engineering Pattern — Structured Output
+##### 5.7.1.4. Prompt Engineering Pattern — Structured Output
 
 ```python
 # System prompt cho SQL Agent
@@ -1895,7 +1923,7 @@ def validate_agent_output(output: dict) -> bool:
     return True
 ```
 
-##### 5.6.1.5. Runtime Enforcement — Execution Guard
+##### 5.7.1.5. Runtime Enforcement — Execution Guard
 
 ```python
 class ExecutionGuard:
@@ -1935,7 +1963,7 @@ class ExecutionGuard:
 > [!TIP]
 > **Nguyên tắc**: Kết quả đã compute một lần nên được **lưu trữ như artifact có thể tái sử dụng**. Khi user (cùng hoặc khác) hỏi câu hỏi tương tự, hệ thống nên **phục vụ từ cache** thay vì chạy lại toàn bộ pipeline.
 
-##### 5.6.2.1. Kiến Trúc Result Artifact Store
+##### 5.7.2.1. Kiến Trúc Result Artifact Store
 
 ```mermaid
 graph TD
@@ -1972,7 +2000,7 @@ graph TD
     end
 ```
 
-##### 5.6.2.2. Artifact Storage Schema
+##### 5.7.2.2. Artifact Storage Schema
 
 ```sql
 -- Result Artifact metadata (PostgreSQL)
@@ -2045,7 +2073,7 @@ CREATE TABLE artifact_access_log (
 );
 ```
 
-##### 5.6.2.3. Query Fingerprinting — Exact + Semantic Matching
+##### 5.7.2.3. Query Fingerprinting — Exact + Semantic Matching
 
 > [!WARNING]
 > **Rủi ro Semantic Matching**: Hai câu hỏi tương tự semantic nhưng **khác time context** có thể match sai:
@@ -2079,7 +2107,7 @@ class QueryFingerprint:
     """
     
     def __init__(self):
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+        self.encoder = SentenceTransformer('multilingual-e5-large')  # Multilingual — hỗ trợ tiếng Việt
     
     # === Strategy 1: SQL Hash (Most Precise) ===
     def sql_hash(self, generated_sql: str) -> str:
@@ -2175,7 +2203,9 @@ class QueryFingerprint:
                 # ENTITY GUARD: Verify that time_range and metric match
                 cached_entities = ExtractedEntities(**artifact.extracted_entities)
                 if (cached_entities.metric == entities.metric and
-                    cached_entities.time_range == entities.time_range):
+                    cached_entities.time_range == entities.time_range and
+                    cached_entities.filters == entities.filters and
+                    cached_entities.granularity == entities.granularity):
                     return CacheResult(
                         artifact=artifact, 
                         match_type="semantic",
@@ -2186,7 +2216,7 @@ class QueryFingerprint:
         return CacheResult(artifact=None, match_type="miss")
 ```
 
-##### 5.6.2.4. Cache Invalidation Strategy — Pipeline-Driven
+##### 5.7.2.4. Cache Invalidation Strategy — Pipeline-Driven
 
 > [!IMPORTANT]
 > **Cache invalidation là vấn đề khó nhất.** Giải pháp: Liên kết cache freshness với data pipeline (dbt run). Khi dbt chạy xong và data thay đổi → invalidate artifacts liên quan.
@@ -2260,7 +2290,7 @@ class CacheInvalidator:
         """, artifact.id, result.data_uri, result.row_count)
 ```
 
-##### 5.6.2.5. API Design — Result Artifact CRUD
+##### 5.7.2.5. API Design — Result Artifact CRUD
 
 ```python
 # FastAPI endpoints cho Result Artifact Store
@@ -2297,7 +2327,7 @@ async def popular_artifacts(limit: int = Query(20)):
     return await artifact_store.most_popular(limit)
 ```
 
-##### 5.6.2.6. Reuse Scenarios Matrix
+##### 5.7.2.6. Reuse Scenarios Matrix
 
 | Scenario | Trigger | Behavior | Latency | LLM Cost |
 |:---------|:--------|:---------|:--------|:---------|
@@ -2309,7 +2339,7 @@ async def popular_artifacts(limit: int = Query(20)):
 | **Data changed** | dbt run event | Mark stale → refresh popular → lazy refresh rest | Background | Minimal (reuse SQL) |
 | **New unique query** | Cache miss | Full pipeline execution | 3-8s | Full cost |
 
-##### 5.6.2.7. Storage & Eviction Strategy
+##### 5.7.2.7. Storage & Eviction Strategy
 
 | Tier | Stored In | TTL | Điều kiện giữ lại |
 |:-----|:----------|:----|:-----------------|
@@ -2318,7 +2348,7 @@ async def popular_artifacts(limit: int = Query(20)):
 | **Cold** | MinIO (JSON archive) | 90 ngày | access_count > 0 |
 | **Evicted** | Deleted | — | access_count = 0 AND age > 7 ngày AND NOT is_pinned |
 
-#### 5.6.3. Tổng Hợp: End-to-End Flow Có Data Integrity + Reusability
+#### 5.7.3. Tổng Hợp: End-to-End Flow Có Data Integrity + Reusability
 
 ```mermaid
 graph TD
@@ -2355,13 +2385,16 @@ graph TD
     STALE --> RESPOND_STALE["💬 Respond\n✅ Stale Result\n⏳ 'Refreshing in background...'"]
 ```
 
-#### 5.6.4. KPIs Đo Lường Data Integrity & Reusability
+#### 5.7.4. KPIs Đo Lường Data Integrity & Reusability
 
 | Metric | Target | Đo bằng | Giải thích |
 |:-------|:-------|:--------|:-----------|
 | **Hallucination Rate** | 0% | Langfuse trace audit: responses với data nhưng không có execution | Mọi data phải từ code execution |
 | **Code Execution Coverage** | 100% | % responses có chart/table mà đã qua execution gateway | Không response nào bypass |
 | **Cache Hit Rate** | > 40% (tuần 1) → > 60% (tháng 3) | Artifact Store metrics | Phản ánh hiệu quả reusability |
+
+> [!NOTE]
+> **Phân biệt Cache Hit Rate**: Semantic Cache (Artifact Store) target 40-60% — đo reuse kết quả AI queries. Dashboard Redis Cache target > 70% — đo cache warming hiệu quả cho pre-computed filter combos. Hai cache layer phục vụ mục đích khác nhau.
 | **Avg Response Time (cached)** | < 100ms | APM metrics | Tốc độ serve từ cache |
 | **LLM Cost Saved by Cache** | > 30% | (cached_queries / total_queries) × avg_cost_per_query | ROI của cache layer |
 | **Artifact Freshness Accuracy** | > 95% | % artifacts có data_freshness_at khớp với actual source update | Cache invalidation chính xác |
@@ -2588,6 +2621,9 @@ SELECT
     SUM(order_total)              AS revenue,            -- Tổng doanh thu
     AVG(order_total)              AS avg_order_value,    -- Giá trị đơn trung bình
     COUNT(DISTINCT customer_name) AS unique_customers    -- Số khách unique
+    -- ⚠️ LƯU Ý: COUNT(DISTINCT) tại grain (order_date, city, customer_segment) chấp nhận được.
+    -- Tuy nhiên KHÔNG ĐƯỢC rollup thêm (ví dụ SUM(unique_customers) theo city) — sẽ double-count.
+    -- Nếu cần rollup, phải dùng HLL_RAW_AGG(customer_id) AS customer_hll + HLL_UNION_AGG() khi query.
 
 FROM stg_orders
 WHERE status NOT IN ('cancelled', 'refunded')  -- Chỉ tính đơn hợp lệ
@@ -2620,7 +2656,7 @@ StarRocks có thêm một lớp optimization — **Materialized Views** (MV). MV
 
 ```sql
 -- StarRocks: Tạo Materialized View
-CREATE MATERIALIZED VIEW mv_monthly_revenue
+CREATE MATERIALIZED VIEW mv_monthly_region  -- Đồng bộ tên với MV catalog tại §5.5
 REFRESH ASYNC EVERY (INTERVAL 15 MINUTE)  -- Tự refresh mỗi 15 phút
 AS
 SELECT
@@ -2710,7 +2746,7 @@ LangGraph Agent xử lý qua các bước:
    ORDER BY thang;
 
 ⚡ Step 3: Execute SQL on StarRocks
-   → StarRocks tự động dùng mv_monthly_revenue (Materialized View)
+   → StarRocks tự động dùng mv_monthly_region (Materialized View)
    → Kết quả trả về trong < 50ms:
    
    | thang       | doanh_thu      |
@@ -2951,6 +2987,10 @@ class SandboxSecurityConfig:
         "statsmodels", "prophet",
         "json", "datetime", "math", "re",
     ]
+    
+    # L5+: Execution time limits (防止 infinite loop)
+    MAX_EXECUTION_TIME_SEC = 15     # SIGTERM after 10s, SIGKILL after 15s
+    POD_ACTIVE_DEADLINE_SEC = 30    # K8s activeDeadlineSeconds — hard pod kill
 
 
 class SandboxCodeValidator:
@@ -3378,7 +3418,8 @@ interface DashboardWidget {
   title: string;
   queryConfig: {
     queryId?: string;                // saved query reference
-    queryTemplate?: string;          // SQL template with {{filter}} placeholders
+    queryTemplate?: string;          // Base SQL template — filter values injected via parameterized queries
+                                     // tại Query Proxy (KHÔNG dùng string interpolation, KHÔNG dùng {{filter}} notation)
     metrics: string[];               // ['revenue', 'quantity']
     dimensions: string[];            // ['month', 'region']
     sortBy?: { field: string; order: 'asc' | 'desc' };
@@ -3607,6 +3648,15 @@ function ReportBuilder({ reportId }: { reportId: string }) {
   // Never imports from @blocknote/* directly
 }
 ```
+
+**Version Pinning & Monitoring Strategy:**
+
+| Aspect | Strategy |
+|:-------|:---------|
+| **Version lock** | Pin chính xác: `"@blocknote/react": "0.47.x"` (patch-level updates OK, minor = review first) |
+| **Renovate Bot** | Auto-update patch only. Minor/major cần manual approval |
+| **Contract tests** | 5 integration tests cho `IReportEditor` methods — chạy trong CI sau mỗi dep update |
+| **Changelog monitoring** | Renovate Bot + GitHub Release Watch cho `TypeCellOS/BlockNote` repo |
 
 **Fallback Plan:**
 | Trigger | Action | Timeline |
@@ -3861,12 +3911,11 @@ const FilterSchema = z.object({
 });
 
 // === Step 2: Parameterized Query Builder ===
-// Sử dụng parameterized queries với positional placeholders ($1, $2...)
+// Sử dụng parameterized queries với `?` placeholders (MySQL protocol — StarRocks compatible)
 // KHÔNG BAO GIỜ dùng string interpolation cho filter values
 
 function buildRevenueTrendQuery(filters: ValidatedFilters): { sql: string; params: any[] } {
   const params: any[] = [];
-  let paramIndex = 1;
   
   // time_grain mapped to column (whitelist, NOT user input in SQL)
   const timeColumn = `d.${filters.time_grain}_key`; // safe: whitelist-validated
@@ -3881,24 +3930,24 @@ function buildRevenueTrendQuery(filters: ValidatedFilters): { sql: string; param
     JOIN dim_date d ON f.date_key = d.date_key
     JOIN dim_store s ON f.store_key = s.store_key
     JOIN dim_product p ON f.product_key = p.product_key
-    WHERE d.date_key BETWEEN $${paramIndex++} AND $${paramIndex++}`;
+    WHERE d.date_key BETWEEN ? AND ?`;
   params.push(filters.start, filters.end);
   
   // Dynamic IN clause — parameterized, NOT string interpolation
   if (filters.regions.length > 0) {
-    const placeholders = filters.regions.map(() => `$${paramIndex++}`).join(',');
+    const placeholders = filters.regions.map(() => '?').join(',');
     sql += ` AND s.region IN (${placeholders})`;
     params.push(...filters.regions);
   }
   
   if (filters.categories.length > 0) {
-    const placeholders = filters.categories.map(() => `$${paramIndex++}`).join(',');
+    const placeholders = filters.categories.map(() => '?').join(',');
     sql += ` AND p.category IN (${placeholders})`;
     params.push(...filters.categories);
   }
   
   if (filters.brands.length > 0) {
-    const placeholders = filters.brands.map(() => `$${paramIndex++}`).join(',');
+    const placeholders = filters.brands.map(() => '?').join(',');
     sql += ` AND p.brand IN (${placeholders})`;
     params.push(...filters.brands);
   }
@@ -3978,30 +4027,50 @@ const FILTER_QUERIES = {
 ```python
 # Pre-populate Redis cache cho top filter combinations
 # Chạy sau mỗi lần dbt run (data refresh)
+# Sử dụng distributed lock để đảm bảo idempotency (tránh 2 cache warm chạy song song)
 
 @asset(deps=[dbt_marts_asset])
 def warm_dashboard_cache(context):
-    """Pre-compute popular filter combos for instant response."""
+    """Pre-compute popular filter combos for instant response.
     
-    TOP_COMBOS = [
-        # Executive: current month, all regions
-        {"time_grain": "month", "start": current_month_start(), "end": today(), "regions": []},
-        # Per-region: current month
-        *[{"time_grain": "month", "start": current_month_start(), "end": today(), "regions": [r]}
-          for r in get_all_regions()],
-        # Weekly: current week
-        {"time_grain": "week", "start": current_week_start(), "end": today(), "regions": []},
-        # Quarterly comparison
-        {"time_grain": "quarter", "start": year_start(), "end": today(), "regions": []},
-    ]
+    Uses Stale-While-Revalidate (SWR) pattern:
+    - DATA_TTL = 5 min (when data becomes stale)
+    - GRACE_TTL = 10 min (when data expires completely)
+    - Requests in 5-10 min window: serve stale + trigger 1 background revalidation
+    """
+    DATA_TTL = 300    # 5 min — after this, data is stale
+    GRACE_TTL = 600   # 10 min — after this, data is expired
     
-    for dashboard in ['executive_overview', 'store_performance', 'product_analysis']:
-        for combo in TOP_COMBOS:
-            result = execute_dashboard_query(dashboard, combo)
-            cache_key = build_cache_key(dashboard, combo)
-            redis.setex(cache_key, 300, json.dumps(result))  # TTL 5 min
+    # Distributed lock: chỉ 1 cache warm chạy tại 1 thời điểm
+    lock = redis.lock("cache_warm:lock", timeout=300)
+    if not lock.acquire(blocking=False):
+        context.log.info("Another cache warming is in progress, skipping.")
+        return
     
-    context.log.info(f"Warmed {len(TOP_COMBOS) * 3} cache entries")
+    try:
+        TOP_COMBOS = [
+            # Executive: current month, all regions
+            {"time_grain": "month", "start": current_month_start(), "end": today(), "regions": []},
+            # Per-region: current month
+            *[{"time_grain": "month", "start": current_month_start(), "end": today(), "regions": [r]}
+              for r in get_all_regions()],
+            # Weekly: current week
+            {"time_grain": "week", "start": current_week_start(), "end": today(), "regions": []},
+            # Quarterly comparison
+            {"time_grain": "quarter", "start": year_start(), "end": today(), "regions": []},
+        ]
+        
+        for dashboard in ['executive_overview', 'store_performance', 'product_analysis']:
+            for combo in TOP_COMBOS:
+                result = execute_dashboard_query(dashboard, combo)
+                cache_key = build_cache_key(dashboard, combo)
+                # SWR: set 2 keys — data + stale marker
+                redis.setex(cache_key, GRACE_TTL, json.dumps(result))
+                redis.setex(f"{cache_key}:fresh", DATA_TTL, "1")  # stale marker
+        
+        context.log.info(f"Warmed {len(TOP_COMBOS) * 3} cache entries (SWR: DATA_TTL={DATA_TTL}s, GRACE_TTL={GRACE_TTL}s)")
+    finally:
+        lock.release()
 ```
 
 > **Tại sao approach này hiệu quả VÀ an toàn?**
@@ -4677,10 +4746,15 @@ export async function POST(req: Request) {
   const permissions = await checkPermissions(user);
   
   // Translate GW spec → StarRocks SQL (server-side, user không thấy SQL)
-  const sql = translateGWSpecToSQL(spec, permissions);
+  // translateGWSpecToSQL implementation:
+  //   1. Map GW spec fields (measures, dimensions, filters) → StarRocks column names
+  //   2. Validate columns against allowed-tables whitelist (chỉ fct_*, dim_*, mv_*)
+  //   3. Inject RBAC row-level filters (region/store restrictions) theo permissions
+  //   4. Return parameterized SQL + params (KHÔNG string interpolation)
+  const { sql, params } = translateGWSpecToSQL(spec, permissions);
   
-  // Query StarRocks
-  const result = await starrocksPool.query(sql);
+  // Query StarRocks với parameterized query
+  const result = await starrocksPool.query(sql, params);
   
   // Audit
   await auditLog({ user: user.id, action: 'explore_query', spec });
@@ -4979,6 +5053,9 @@ class ChatRBACMiddleware:
     RBAC enforcement cho AI Chat queries.
     CRITICAL: Mọi query từ AI Agent PHẢI đi qua middleware này.
     Không có path nào bypass được.
+    
+    Security: Dùng sqlglot để parse SQL AST — tránh string matching fragile.
+    Dùng parameterized queries — tránh SQL injection.
     """
     
     async def enforce(
@@ -4989,46 +5066,62 @@ class ChatRBACMiddleware:
     ) -> str:
         """Inject RBAC filters vào SQL trước khi execute."""
         
-        # Step 1: Parse SQL để tìm FROM/JOIN clauses
-        tables = extract_tables_from_sql(query)
+        # Step 1: Parse SQL bằng sqlglot (AST-based, không dùng string matching)
+        import sqlglot
+        parsed = sqlglot.parse_one(query, dialect="starrocks")
+        tables_with_aliases = extract_tables_and_aliases(parsed)
+        # Returns: [{"table": "fct_sales_daily", "alias": "f"}, {"table": "dim_store", "alias": "s"}, ...]
         
-        # Step 2: Inject WHERE clauses dựa trên user permissions
-        rbac_filters = []
+        # Step 2: Build RBAC filter với parameterized values
+        rbac_params = []
         
-        if 'fct_sales_daily' in tables or 'fct_revenue' in tables:
-            if user.role == 'regional_manager':
-                allowed = ', '.join(f"'{r}'" for r in user.allowed_regions)
-                rbac_filters.append(f"s.region IN ({allowed})")
+        fact_tables = {'fct_sales_daily', 'fct_revenue', 'mv_monthly_region', 'mv_daily_store'}
+        has_fact_table = any(t["table"] in fact_tables for t in tables_with_aliases)
+        
+        if has_fact_table:
+            # Tìm alias thực tế của dim_store (không hardcode 's')
+            store_alias = next(
+                (t["alias"] for t in tables_with_aliases if t["table"] == "dim_store"), 
+                None
+            )
+            
+            if user.role == 'regional_manager' and store_alias:
+                # Parameterized: dùng ? placeholders thay vì string interpolation
+                placeholders = ', '.join(['?'] * len(user.allowed_regions))
+                rbac_filter = f"{store_alias}.region IN ({placeholders})"
+                rbac_params.extend(user.allowed_regions)
                 
-            elif user.role == 'store_manager':
-                allowed = ', '.join(f"'{s}'" for s in user.allowed_stores)
-                rbac_filters.append(f"s.store_code IN ({allowed})")
+            elif user.role == 'store_manager' and store_alias:
+                placeholders = ', '.join(['?'] * len(user.allowed_stores))
+                rbac_filter = f"{store_alias}.store_code IN ({placeholders})"
+                rbac_params.extend(user.allowed_stores)
+            
+            elif not store_alias and user.role in ('regional_manager', 'store_manager'):
+                # Query không JOIN dim_store → force JOIN để apply RBAC
+                query = f"""
+                    SELECT _inner.* FROM ({query}) AS _inner
+                    JOIN dim_store _rbac_s ON _inner.store_key = _rbac_s.store_key
+                    WHERE _rbac_s.region IN ({', '.join(['?'] * len(user.allowed_regions))})
+                """
+                rbac_params.extend(user.allowed_regions)
+                return query, rbac_params
         
-        # Step 3: Wrap original query với RBAC filter
-        if rbac_filters:
-            rbac_where = " AND ".join(rbac_filters)
-            # Wrap trong subquery để guarantee filter applied
-            query = f"""
-                SELECT * FROM ({query}) AS _inner
-                WHERE EXISTS (
-                    SELECT 1 FROM dim_store s 
-                    WHERE s.store_key = _inner.store_key 
-                    AND {rbac_where}
-                )
-            """
+        # Step 3: Inject RBAC filter vào WHERE clause (AST-safe)
+        if rbac_params:
+            query = inject_where_clause(parsed, rbac_filter)
         
         # Step 4: Block queries tới sensitive tables
-        for table in tables:
-            if table in BLOCKED_TABLES:
+        for t in tables_with_aliases:
+            if t["table"] in BLOCKED_TABLES:
                 raise SecurityError(
-                    f"Access denied: table '{table}' is restricted"
+                    f"Access denied: table '{t['table']}' is restricted"
                 )
         
         # Step 5: Enforce LIMIT (prevent bulk data extraction via chat)
         if 'LIMIT' not in query.upper():
             query += " LIMIT 10000"
         
-        return query
+        return query, rbac_params
     
     async def mask_result_columns(
         self, result: list[dict], user: UserContext
@@ -5226,6 +5319,7 @@ graph TD
 | Task | Deliverable | KPI |
 |:-----|:-----------|:----|
 | Setup Next.js + FastAPI project | Monorepo structure | Build thành công |
+| **Auth & RBAC** | **Better Auth integration — multi-tenant** | **Login + role-based access working** |
 | Chat interface cơ bản | Streaming chat UI | Response time < 2s |
 | K8s Pod Sandbox integration | Code execution pipeline | Execute Python < 5s (pod startup + execution) |
 | File upload (CSV/Excel) | Parse & store files | Support files ≤ 100MB |
@@ -5244,7 +5338,6 @@ graph TD
 | Task | Deliverable | KPI |
 |:-----|:-----------|:----|
 | Wren AI semantic layer | MDL setup + text-to-SQL| SQL accuracy > 85% |
-| Database connectors | MongoDB (primary), MySQL (legacy) via Airbyte CDC | 2 source types connected |
 | Query caching | Redis-based cache | Cache hit rate > 40% |
 | Dashboard builder | Save & arrange charts | Drag-and-drop working |
 | Scheduled reports | Auto-run notebooks | Email/Slack delivery |
@@ -5252,7 +5345,6 @@ graph TD
 ### 8.5. Phase 4: Production Ready (2-3 tuần)
 | Task | Deliverable | KPI |
 |:-----|:-----------|:----|
-| Auth & RBAC | Better Auth integration | Multi-tenant isolation |
 | Observability | Langfuse tracing | 100% request traced |
 | Rate limiting & quotas | Usage control | Per-user limits enforced |
 | Performance optimization | Query optimization | P95 latency < 5s |
@@ -5295,7 +5387,7 @@ graph TD
 | Model | Input Cost | Output Cost | Avg Input Tokens | Avg Output Tokens | Chi phí/query | Chi phí/ngày (1K) | Chi phí/tháng |
 |:------|:-----------|:-----------|:----------------|:-----------------|:-------------|:-----------------|:-------------|
 | GPT-4o | $2.50/1M | $10/1M | ~2,000 | ~1,500 | ~$0.02 | ~$20 | ~$600 |
-| Claude Sonnet 4 | $3/1M | $15/1M | ~2,000 | ~1,500 | ~$0.029 | ~$29 | ~$870 |
+| claude-sonnet-4-5 | $3/1M | $15/1M | ~2,000 | ~1,500 | ~$0.029 | ~$29 | ~$870 |
 | Gemini 2.5 Flash | $0.15/1M | $0.60/1M | ~2,000 | ~1,500 | ~$0.001 | ~$1.2 | ~$36 |
 | **Hybrid Strategy** | — | — | — | — | ~$0.008 | ~$8 | ~$240 |
 
@@ -5381,11 +5473,11 @@ graph TD
 | Component | Container Image | Resources | Replicas | Notes |
 |:----------|:---------------|:----------|:---------|:------|
 | **Next.js Frontend** | `node:20-alpine` | 2 vCPU, 4GB RAM | 2 | Behind Nginx reverse proxy |
-| **FastAPI Backend** | `python:3.12-slim` | 4 vCPU, 8GB RAM | 2 | Agent orchestration + Query Proxy |
+| **FastAPI Backend** | `python:3.12-slim` | 4 vCPU, 8GB RAM | 2 | Agent orchestration (LangGraph, Wren AI, K8s Sandbox) |
 | **StarRocks FE** | `starrocks/fe-ubuntu` | 4 vCPU, 8GB RAM | 1 (dev), 3 (prod) | MySQL port 9030 |
 | **StarRocks BE** | `starrocks/be-ubuntu` | **16 vCPU, 64GB RAM** | **≥3 (StatefulSet)** | Storage + computation. 2TB+ data cần ≥3 nodes |
 | **Redis** | `redis:7-alpine` | 2 vCPU, 4GB RAM | 3 (Sentinel/Cluster) | Dashboard cache + rate limiting cho 300-500 users |
-| **PostgreSQL** | `postgres:16-alpine` | 2 vCPU, 4GB RAM | 1 | Metadata, sessions, audit |
+| **PostgreSQL** | `postgres:16-alpine` | 2 vCPU, 8GB RAM | 1 | Metadata, sessions, audit |
 | **Airbyte** | `airbyte/airbyte` | 4 vCPU, 8GB RAM | 1 | CDC ingestion |
 | **Dagster** | `dagster/dagster` | 2 vCPU, 4GB RAM | 1 | Pipeline orchestration |
 | **Wren AI** | `wren-ai` | 2 vCPU, 4GB RAM | 1 | Semantic layer |
@@ -5423,43 +5515,57 @@ graph TD
 
 ```yaml
 # K8s health checks (liveness + readiness probes)
-services:
-  starrocks-fe:
-    healthcheck:
-      test: ["CMD", "mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-  
-  postgresql:
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-  
-  redis:
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-  
-  fastapi:
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped    # Auto-restart on crash
-  
-  nextjs:
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
+# Lưu ý: Format K8s Pod spec, KHÔNG phải docker-compose
+
+# --- StarRocks FE ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: starrocks-fe
+spec:
+  containers:
+  - name: starrocks-fe
+    livenessProbe:
+      exec:
+        command: ["mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      exec:
+        command: ["mysql", "-h", "localhost", "-P", "9030", "-e", "SELECT 1"]
+      periodSeconds: 5
+
+# --- PostgreSQL ---
+# livenessProbe:
+#   exec:
+#     command: ["pg_isready", "-U", "postgres"]
+#   periodSeconds: 10
+#   failureThreshold: 3
+
+# --- Redis ---
+# livenessProbe:
+#   exec:
+#     command: ["redis-cli", "ping"]
+#   periodSeconds: 5
+
+# --- FastAPI ---
+# livenessProbe:
+#   httpGet:
+#     path: /health
+#     port: 8000
+#   periodSeconds: 15
+#   failureThreshold: 3
+# (K8s restartPolicy: Always — thay thế docker-compose "restart: unless-stopped")
+
+# --- Next.js ---
+# livenessProbe:
+#   httpGet:
+#     path: /api/health
+#     port: 3000
+#   periodSeconds: 15
+#   failureThreshold: 3
 ```
 
 
@@ -5473,7 +5579,7 @@ services:
 |:----------|:----------|:-------------|:----------|:----------|:----|:----|
 | **PostgreSQL** | Metadata, dashboards, reports, audit, auth | `pg_dump` → MinIO/S3 | Hàng ngày (2:00 AM) | 30 ngày | 24 giờ | < 1 giờ |
 | **PostgreSQL WAL** | Incremental changes | WAL archiving → MinIO/S3 | Continuous | 7 ngày | < 15 phút | < 30 phút |
-| **StarRocks** | OLAP data | Không backup riêng — re-sync từ source via Airbyte | On-demand | N/A | = Airbyte sync time | 2-4 giờ (full re-sync) |
+| **StarRocks** | OLAP data | `BACKUP ... TO REPOSITORY` snapshot → MinIO/S3 (native StarRocks backup) | Hàng ngày (3:00 AM) | 7 ngày | 24 giờ | < 1 giờ (incremental restore). Fallback: full re-sync via Airbyte (2-4 giờ) |
 | **Redis** | Cache (ephemeral) | Không backup — cache tự warm lại | N/A | N/A | N/A | < 5 phút |
 | **MinIO** | File uploads, artifacts | Cross-bucket replication | Real-time | 90 ngày | < 1 phút | < 30 phút |
 | **Wren AI MDL** | Semantic layer config | Git version control | Mỗi change | Unlimited | 0 (in Git) | < 5 phút (git checkout) |
@@ -5624,6 +5730,54 @@ graph TD
 
 ## Appendix
 
+### B. Architectural Improvement Backlog (v6.0 Review)
+
+> [!NOTE]
+> Các improvement suggestions bên dưới được phát hiện trong quá trình review v6.0 (xem `bi-update.md`). Đây là các cải tiến **nên** triển khai nhưng **không phải blocker** cho MVP. Ưu tiên triển khai theo thứ tự từ trên xuống.
+
+#### I1. Pod Pool Pre-warming cho K8s Sandbox (§2.2, §4.3)
+**Vấn đề**: 300-500 users đồng thời yêu cầu Python analysis → pod cold start (1-3s) gây latency spike.
+**Đề xuất**: Giữ sẵn 3-5 idle pods warm, scale theo HPA (minReplicas=3, maxReplicas=20). Tương tự AWS Lambda warm start.
+
+#### I2. Schema Drift Detection cho MongoDB (§5.1)
+**Vấn đề**: MongoDB thêm/đổi field → dbt raw models lệch schema → pipeline stop.
+**Đề xuất**: Dagster step: Airbyte detect schema change → emit event → pause pipeline → alert data team → resume sau khi dbt+MDL update.
+
+#### I3. ChromaDB → Qdrant Migration Lifecycle (§4.2)
+**Vấn đề**: "ChromaDB (dev) → Qdrant (prod)" không define trigger, migration steps, rollback plan.
+**Đề xuất**: Trigger: >500K vectors HOẶC p95 search >200ms. Migration runbook: export embeddings → batch import Qdrant → validate → switch endpoint → monitor 24h → decommission ChromaDB.
+
+#### I4. Circuit Breaker cho Next.js ↔ FastAPI (§4.2.1)
+**Vấn đề**: Circular dependency (Next.js → FastAPI → Next.js Query Proxy) có thể gây cascade failure.
+**Đề xuất**: `httpx` retry config + exponential backoff + circuit breaker. Fallback: nếu Next.js Query Proxy unreachable, FastAPI execute query trực tiếp với RBAC tự handle.
+
+#### I5. Cache Invalidation Race Condition (§5.7.2.4)
+**Vấn đề**: Giữa `mark stale` và `background refresh`, concurrent requests nhận stale artifact.
+**Đề xuất**: Redis `SETNX` distributed lock — atomic stale marking + background refresh launch. Subsequent requests serve stale với explicit "refreshing" badge.
+
+#### I6. Rate Limiting cho AI Chat Path (§7)
+**Vấn đề**: AI Chat (UC2) không có rate limiting — 1 user có thể gửi 1000 queries, exhaust LLM budget + K8s pods.
+**Đề xuất**: Implement từ Phase 1:
+- Per-user: 60 queries/giờ (configurable)
+- Per-session: 20 complex Python queries/giờ
+- Global: budget alert khi LLM cost vượt threshold/ngày
+
+#### I9. Data Freshness UX Gap (§5.1.4 vs §5.8)
+**Vấn đề**: User thấy "Data cập nhật 3 phút trước" nhưng hỏi về đơn hàng 4 phút trước → AI nói "không có" → confused.
+**Đề xuất**: Hiển thị rõ: "Data có hiệu lực đến [timestamp]. Đơn hàng tạo sau [timestamp] chưa được phản ánh." AI cần proactively cảnh báo khi user hỏi về data trong freshness window.
+
+#### I11. File Upload Pipeline Definition (§8.2 vs §4.2)
+**Vấn đề**: Phase 1 task "File upload (CSV/Excel)" thiếu pipeline definition.
+**Đề xuất**: `Browser → Next.js → MinIO → FastAPI (schema inference via pandas) → Temporary StarRocks table → Wren AI MDL patch (session-scoped)`. File cleanup policy: 24h TTL hoặc user-controlled.
+
+#### I13. Dashboard/Report Schema Migration (§6.0.4)
+**Vấn đề**: Dashboards chứa SQL template và column references. dbt rename column → saved dashboards fail silently.
+**Đề xuất**: (1) Versioning: `dashboardSchemaVersion: "1.0"`. (2) Dagster trigger dashboard migration job khi dbt column rename. (3) Alert dashboard owners nếu migration fail.
+
+#### I14. Session Persistence cho LangGraph (§4.3)
+**Vấn đề**: User đóng tab, mở lại → session có được restore không? Không có mô tả checkpoint strategy.
+**Đề xuất**: Lưu LangGraph checkpoints vào PostgreSQL `chat_sessions`. TTL: 7 ngày (configurable). Session resume: fetch last checkpoint → context restored.
+
 ### A. Version Tracking
 
 | Version | Date | Changes |
@@ -5646,9 +5800,10 @@ graph TD
 | v3.4 | 2026-04-08 | **USE-CASE CORRECTION + SOURCE VERIFICATION** — Split UC2 into UC2a (Chat Ad-hoc) + UC2b (Dashboard Builder for UC1). Added Layer 2: Dashboard Builder (react-grid-layout, Grafana/Metabase pattern). **BlockNote source code cloned and verified** (8 claims confirmed: custom blocks, AI via Vercel AI SDK, PDF via @react-pdf/renderer, collaboration, React 18/19). License analysis: core=MPL-2.0 OK, xl-*=GPL-3.0 OK for internal. Compared BlockNote vs TipTap vs Plate. Updated to 5-layer visualization stack. Added Dashboard data model + UC2b→UC1 flow |
 | v4.0 | 2026-04-08 | **COMPREHENSIVE CLEANUP** — Removed all Evidence.dev references from diagrams (§1.3, §4.1, §7.4). Replaced Plotly/Recharts→ECharts in §4.2, §5.6. Removed Parquet references (§5.6.2, §7, §10.3). Fixed §2 numbering (2.1↔2.2 swap). Removed duplicate §3.5.6. Condensed §6.9+§6.10 Evidence research (297→20 lines). Condensed §6.11.4-6.11.6 old viz stack (62→12 lines). **Trimmed §7.1-7.7** Evidence Parquet analysis (418→50 lines) — replaced with Server-Side Query Proxy security architecture. Fixed §7 numbering (7.1-7.6). Updated §7.6 checklist (Evidence items→Dashboard/Report Builder items). Total: **4636→~4010 lines** (~14% reduction). Zero obsolete references remaining |
 | v4.1 | 2026-04-08 | **USE CASE REFACTORING** — Renumbered UC2a/UC2b/UC3 → UC1-UC4. **Key architectural insight**: Chart = atomic unit shared across all surfaces. Dashboard ⊂ Report Page (same data model, differs only by `layout_type: 'grid' \| 'page'`). **Any user** can create dashboards (personal vs global, global needs approval). UC2 (Chat) charts can "Add to Dashboard" (UC3) or "Add to Report Page" (UC4). New §6.0.2: Chart-Centric Architecture diagram. Updated §6.0.3 Layers: Viewer (UC1), AI Chat (UC2), Dashboard Builder (UC3), Report Builder (UC4), Data Explorer (optional). Updated all 79 UC references across document |
-| v5.3 | 2026-04-08 | **MCP INTEGRATION STRATEGY** — Researched MCP (Model Context Protocol) availability cho tất cả components. Kết quả: **9/10 components có official MCP server** (dbt, Airbyte, StarRocks, Wren AI, Dagster, PostgreSQL, Langfuse, MinIO, K8s — chỉ Redis là community). Added §4.6: MCP Integration Strategy với availability matrix, architecture diagram, 4 concrete UC-Dev use cases (setup CDC, debug pipeline, create MVs, maintain MDL), 4-phase adoption plan, và MCP server configuration template. Decision #19 added to §1.2 |
 | v5.2 | 2026-04-08 | **MongoDB PRIMARY correction** — MongoDB confirmed as primary source (~95% volume, 2TB+), MySQL is minor legacy (~5%). Updated all diagrams, CDC edges, Data Journey walkthrough (POS → MongoDB insertOne → Change Streams → Airbyte), summary tables, CDC config table. Added dbt note about MongoDB nested document flattening |
+| v5.3 | 2026-04-08 | **MCP INTEGRATION STRATEGY** — Researched MCP (Model Context Protocol) availability cho tất cả components. Kết quả: **9/10 components có official MCP server** (dbt, Airbyte, StarRocks, Wren AI, Dagster, PostgreSQL, Langfuse, MinIO, K8s — chỉ Redis là community). Added §4.6: MCP Integration Strategy với availability matrix, architecture diagram, 4 concrete UC-Dev use cases (setup CDC, debug pipeline, create MVs, maintain MDL), 4-phase adoption plan, và MCP server configuration template. Decision #19 added to §1.2 |
 | v5.1 | 2026-04-08 | **CONFIRMED REQUIREMENTS & ARCHITECTURE REVISION** — All 12 open questions answered with real production data. **Key changes**: (1) Source DBs: MongoDB (primary, ~95%, 2TB+) + MySQL (~5%) — removed PostgreSQL as OLTP source, updated all CDC configs, pipeline diagrams; (2) **E2B Cloud → K8s Pod Sandbox** — on-premise deployment incompatible with E2B cloud service, replaced ~42 references with self-hosted K8s ephemeral pods using NetworkPolicy isolation; (3) Scale revised: 2TB+ data (→20-40TB future), 300+ tables, 300-500 users — StarRocks cluster sized to ≥3 BE nodes (16vCPU, 64GB each), Redis Cluster mode, fact table estimates updated to ~5-20M rows/year; (4) **On-premise K8s deployment** — removed Docker Compose phase entirely, K8s-native from day 1, Helm charts for management; (5) Cost estimation revised for on-premise: $0 infrastructure (existing K8s), only ~$240-600/mo LLM API cost vs $15,000/mo SaaS equivalent; (6) **PII & Data Masking Pipeline** added §5.3b — 3-tier masking (PII hash in dbt staging, column-level RBAC for financial data, row-level RBAC for business metrics), column-level RBAC matrix for 5 roles; (7) Domain context: supermarket chain operations — updated examples (POS transactions, store/inventory data), business domains (Sales, Finance, Operations, SCM, HR); (8) Removed Julius.ai pricing table (unnecessary for internal build); (9) Updated Executive Summary with confirmed scale, infra, security details |
 | v5.0 | 2026-04-08 | **COMPREHENSIVE SECURITY & INTEGRITY REVIEW** — 17 issues identified and fixed across the entire document. **Critical Security (3)**: (1) Fixed SQL injection in Query Proxy §6.2 — replaced string interpolation with parameterized queries + Zod validation + whitelist-based filter validation; (2) Added K8s Pod Sandbox Security §5.7 — 4-layer protection (network isolation, query proxy, output sanitization, code static analysis) to prevent data exfiltration; (3) Added RBAC enforcement for AI Chat path §7.3 — 3-point enforcement (agent context injection, SQL post-processing, result column masking) ensuring chat queries respect same RBAC as dashboards. **Logic Fixes (5)**: (4) Removed PandasAI from tech stack §4.2 (replaced by LLM-generated code in K8s Pod Sandbox); (5) Added API Gateway Architecture §4.2.1 — clear boundary between Next.js API Routes (auth, query proxy, CRUD) and FastAPI (agent, Wren AI, K8s Pod Sandbox); (6) Added Graduated Retry Strategy §5.6.1.3b — max 3 retries with escalating fallback, prevents infinite retry loops; (7) Fixed customer_count semi-additive measure §5.2/5.4 — replaced INT+SUM with HLL (HyperLogLog) + HLL_UNION_AGG for correct distinct count across dimensions; (8) Rewrote Query Fingerprinting §5.6.2.3 — 3-layer matching (SQL hash → entity-extracted hash → semantic match with entity guard) to prevent cross-period false cache matches. **Missing Sections (4)**: (9) Added Working Assumptions §2.3 — 10 assumptions with impact analysis and confirm-before-phase flags; (10) Added Multi-Language Strategy §2.4 — language decisions for prompts, MDL, UI, embedding model; (11) Added Wren AI Integration Architecture §4.4 — connection config, LangGraph→Wren API flow, MDL maintenance workflow, fallback strategy; (12) Added Data Reconciliation §5.1.7 — automated source-vs-OLAP validation with tolerance thresholds and alerts. **Infrastructure (5)**: (13) Updated Cost Estimation §9.3.2 — fixed StarRocks under-estimate, MVP ~$820/mo, Prod ~$1,295/mo; (14) Added HA Strategy §9.7 — component-by-component HA plan (MVP vs Production), health checks, auto-restart; (15) Added Backup & Disaster Recovery §9.8 — RPO/RTO targets, backup methods per component, 3-scenario DR runbook; (16) Added BlockNote Abstraction Layer §6.0.5 — IReportEditor interface to decouple app from pre-1.0 API, fallback plan to TipTap; (17) Added Monitoring & Alerting Architecture §9.9 — Prometheus+Grafana+Loki stack, 5 Grafana dashboards, 9 alert rules, log aggregation strategy, incident response playbook |
+| v6.0 | 2026-04-09 | **QUALITY HARDENING — 33 FIXES APPLIED** from `bi-update.md` review. **Critical/Blocker (6)**: (1) Fixed `mv_daily_store` using non-existent `customer_count` → `HLL_UNION_AGG(customer_hll)`; (2) Fixed StarRocks param style `$1,$2` → `?` (MySQL protocol); (3) Fixed `reconcile_data` connecting to wrong `production_pg` → Airbyte-raw SQL comparison on StarRocks; (4) Fixed SQL injection in RBAC filter → parameterized queries + sqlglot AST parsing; (5) Added HLL rollup warning for `fct_revenue`; (6) Fixed Entity Guard missing `filters`/`granularity` in Semantic Cache. **High (9)**: Embedding model → multilingual-e5-large; Sandbox timeout → MAX_EXECUTION_TIME_SEC=15; GW RBAC `translateGWSpecToSQL` documented; SWR cache pattern + distributed lock; Health checks docker-compose → K8s probes; Reconciliation SQL for MongoDB → Airbyte-raw approach. **Medium (12)**: MDL Change Control Process + versioning/rollback strategy; BlockNote version pinning + contract tests; Dagster/Airflow naming fixed; `mv_brand_performance` added `customer_hll`; PostgreSQL RAM 4GB→8GB; FastAPI role description corrected; Cache warming idempotency lock; `queryTemplate` parameterized-only (no `{{filter}}`). **Low (6)**: Layer count title 5→6; WrenAIClient code fix; LLM model names; MV naming consistency; Version tracking order; Interval syntax fix. |
 
 
