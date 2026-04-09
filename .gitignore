@@ -1,0 +1,51 @@
+# OS Files
+.DS_Store
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Research Source Repos (User Request)
+oss/
+
+# Node.js
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.eslintcache
+.stylelintcache
+
+# TypeScript
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+bi/starrocks/data/ # Potential data files
+iam/better-auth/data/ # Potential data files
+
+---
+# Version Tracking
+# 1.0.0 - 2026-04-09 - Initial gitignore with oss/ exclusion.
