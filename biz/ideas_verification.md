@@ -1,6 +1,12 @@
 # Báo Cáo Thẩm Định Tính Khả Thi (Feasibility Review) 
 *Dành cho 20 Ý Tưởng Micro-SaaS - Nguồn dữ liệu chéo từ Web Search (2026).*
 
+> **⚠️ Historical Seed Data — Pre-Pipeline**: Tài liệu này được tạo thủ công TRƯỚC khi pipeline tồn tại (version 1.0.0, do antigravity brainstorm ban đầu). Đây KHÔNG PHẢI output của pipeline — vì pipeline chưa hề chạy.
+>
+> **Mục đích**: Dùng làm **evaluation benchmark** — sau khi pipeline chạy xong Sprint 3, so sánh xem pipeline có tái phát hiện được bao nhiêu trong 20 ideas gốc → đó là precision metric cho pipeline. Nếu pipeline tìm ra ≥ 60% các idea đã verify → pipeline hoạt động tốt.
+>
+> `opportunities` table (pipeline output thực tế) và danh sách này **không cần mapping 1:1** vì mục đích khác nhau.
+
 Dựa trên quá trình rà soát và đối chiếu hệ sinh thái sản phẩm trên Internet, đây là bảng phân loại các ý tưởng nhằm giúp bạn ưu tiên nguồn lực để thực thi. Việc làm một sản phẩm tĩnh gọn thường sẽ dễ thành công nhất ở những ngách **đã có đối thủ lớn chứng minh được nhu cầu, nhưng sản phẩm của họ quá đắt hoặc quá phức tạp**.
 
 ## 🚀 1. Nhóm Đã Được Kiểm Chứng Mạnh Mẽ (Highly Validated)

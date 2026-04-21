@@ -1,5 +1,11 @@
 # 20 Ý Tưởng Micro-SaaS Tối Giản Dành Cho Solo Builder (Global Market)
 
+> **⚠️ Historical Seed Data — Pre-Pipeline**: Tài liệu này được tạo thủ công TRƯỚC khi pipeline tồn tại (version 1.0.0, do antigravity brainstorm ban đầu). Đây KHÔNG PHẢI output của pipeline — vì pipeline chưa hề chạy.
+>
+> **Mục đích**: Dùng làm **evaluation benchmark** — sau khi pipeline chạy xong Sprint 3, so sánh xem pipeline có tái phát hiện được bao nhiêu trong 20 ideas gốc → đó là precision metric cho pipeline. Nếu pipeline tìm ra ≥ 60% các idea đã verify → pipeline hoạt động tốt.
+>
+> `opportunities` table (pipeline output thực tế) và danh sách này **không cần mapping 1:1** vì mục đích khác nhau.
+
 Danh sách này tập trung vào các ý tưởng giải quyết một "nỗi đau" (pain point) rất cụ thể, thiết kế tối giản (minimal), chi phí duy trì hàng tháng cực thấp (low ticket) nhưng có thể phục vụ số lượng người dùng lớn ở quy mô toàn cầu.
 
 ## Nhóm dành cho Developers & Indie Hackers

@@ -72,6 +72,51 @@ def select_model(step: str) -> str:
 
 ---
 
+## 2b. Bổ sung từ opencode: Model Router trong Docker Container
+
+**Vấn đề bổ sung**: Pseudo-code trên dùng `psutil.virtual_memory()` — nhưng Ollama chạy trong Docker container. `psutil` bên trong container sẽ đọc RAM của **container limit** (ví dụ 20GB), không phải RAM thực tế của host machine. Nếu host chỉ có 16GB nhưng container được cấp 20GB, model sẽ load thất bại do OOM.
+
+**Giải pháp**: Truyền RAM available từ host vào container qua env variable hoặc health endpoint:
+
+```python
+# Host-side: expose available RAM via a local HTTP endpoint (port 12345)
+# Container Ollama gọi endpoint này để biết RAM thực tế của host
+
+import requests, psutil
+
+def get_host_available_ram_gb() -> float:
+    # Chạy trên HOST, không phải trong container
+    return psutil.virtual_memory().available / (1024**3)
+
+# Model Router trong container:
+def select_model(step: str) -> str:
+    try:
+        available_ram_gb = requests.get("http://host.docker.internal:12345/ram").json()["available_gb"]
+    except:
+        # Fallback: đọc từ env variable được set bởi host script
+        available_ram_gb = float(os.environ.get("HOST_AVAILABLE_RAM_GB", 16))
+    
+    MODEL_MAP = {
+        "2a": {"default": "nemotron-nano-4b", "min_ram": 4},
+        "4b": {
+            "default": "qwen3.5-27b",     # RAM >= 20GB
+            "fallback": "gemma-4-12b",     # RAM >= 8GB
+            "min_ram": 8
+        },
+    }
+    config = MODEL_MAP[step]
+    if available_ram_gb >= 20:
+        return config["default"]
+    elif available_ram_gb >= config["min_ram"]:
+        return config.get("fallback", config["default"])
+    else:
+        raise InsufficientRAMError(f"Step {step} cần tối thiểu {config['min_ram']}GB")
+```
+
+**Hành động**: Thêm host-side health endpoint + container Model Router vào Sprint 2 roadmap.
+
+---
+
 ## 3. Database Schema thiếu audit trail
 
 **Vị trí**: `market_validation_system.md` (dòng 276-363)

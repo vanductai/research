@@ -1,9 +1,10 @@
 # Hệ Thống Tự Động Phát Hiện Nhu Cầu Thị Trường (Automated Pain-Point Discovery System)
 
-> **Mục tiêu**: Xây dựng hệ thống 100% local, vận hành hoàn toàn bởi AI Agent, tự động phát hiện "nỗi đau" (pain-points) từ cộng đồng toàn cầu và gợi ý ý tưởng Micro-SaaS.
-> **Triết lý**: Ưu tiên giải pháp miễn phí, crawling chủ động, chạy hoàn toàn trên máy local — không phụ thuộc SaaS trả phí.
+> **Mục tiêu**: Xây dựng hệ thống local-first, vận hành hoàn toàn bởi AI Agent, tự động phát hiện "nỗi đau" (pain-points) từ cộng đồng toàn cầu và gợi ý ý tưởng Micro-SaaS.
+> **Triết lý**: Ưu tiên giải pháp miễn phí, crawling chủ động, chạy trên máy local — tối thiểu phụ thuộc bên ngoài.
 > **Nguyên tắc**: Không đo lường được thì không quản lý & tối ưu được.
-> **Constraint**: Toàn bộ data lưu trữ trong Database (PostgreSQL + ChromaDB). Báo cáo và insights hiển thị realtime qua Web Dashboard — không xuất file định kỳ.
+> **Constraint**: Toàn bộ data lưu trữ trong Database (PostgreSQL + ChromaDB). Báo cáo và insights hiển thị realtime qua Web Dashboard. Không tự động sinh file định kỳ. Export file chỉ khi user chủ động request.
+> **Note**: Jina Reader (free 10M tokens) + residential proxy (~$20/tháng) là 2 ngoại lệ duy nhất, chỉ dùng khi crawler bị chặn hoàn toàn.
 
 ---
 
@@ -140,24 +141,30 @@ graph TD
 graph TD
     Ranked["💾 Top N clusters"]
     
+    MR["Model Router<br/>Check host RAM → select model"]
     F1["4a. Competitor Search<br/>Lightpanda + Scrapling (no LLM)<br/>Search: '[keyword] tool/solution'"]
-    F2["4b. Competitor Analysis<br/>Qwen3.5-27B (20GB, temp=0.2)<br/>→ blue_ocean / better_alt / saturated"]
-    F3["4c. MVP Suggestion<br/>Qwen3.5-27B (20GB, temp=0.5)<br/>→ tech stack, features, pricing, timeline"]
+    F2["4b. Competitor Analysis<br/>Qwen3.5-27B / Gemma 4-12B<br/>(Model Router chọn theo RAM)<br/>→ blue_ocean / better_alt / saturated"]
+    F3["4c. MVP Suggestion<br/>Qwen3.5-27B / Gemma 4-12B<br/>(Model Router chọn theo RAM)<br/>→ tech stack, features, pricing, timeline"]
     F4["4d. Structured Report<br/>Ministral 8B (6GB, temp=0)<br/>→ INSERT INTO opportunities"]
+    F5["4e. Compliance Check<br/>Nemotron Nano 4B (temp=0)<br/>→ {compliant: bool, risk: str}"]
     
-    Ranked --> F1
+    Ranked --> MR
+    MR --> F1
     F1 --> F2
     F2 --> F3
     F3 --> F4
-    F4 --> Report["💾 opportunities table<br/>(structured data, không phải markdown)"]
+    F4 --> F5
+    F5 --> Report["💾 opportunities table<br/>(structured data, không phải markdown)"]
 ```
 
 | Sub-step | Model | Output format |
 |:---|:---|:---|
 | 4a | — (Crawler) | HTML → text |
-| 4b | **Qwen3.5-27B** | `{gap_type: enum, competitors: [{name,pricing,weakness}]}` |
-| 4c | **Qwen3.5-27B** | `{tech_stack, core_features, pricing, build_time}` |
+| Model Router | Host RAM check | Select Qwen3.5-27B (≥20GB) or Gemma 4-12B (≥8GB) |
+| 4b | **Qwen3.5-27B** / Gemma 4-12B | `{gap_type: enum, competitors: [{name,pricing,weakness}]}` |
+| 4c | **Qwen3.5-27B** / Gemma 4-12B | `{tech_stack, core_features, pricing, build_time}` |
 | 4d | **Ministral 8B** | Structured JSON → INSERT opportunities |
+| 4e | **Nemotron Nano 4B** | `{compliant: bool, risk: str}` | |
 
 ---
 
@@ -169,7 +176,7 @@ graph TD
 graph TD
     DB["💾 PostgreSQL<br/>(clusters + opportunities)"]
     
-    G1["5a. Web Dashboard<br/>FastAPI reads DB → renders realtime<br/>Clusters, scores, trends, MVP suggestions"]
+    G1["5a. Web Dashboard<br/>FastAPI reads DB → renders realtime<br/>Clusters, scores, trends, MVP suggestions<br/>(default: chỉ hiển thị compliance_status='compliant')"]
     G2["5b. Adjust parameters<br/>Agent phân tích metrics:<br/>- Source nào cho pain-point tốt nhất?<br/>- Keyword nào convert cao nhất?<br/>→ UPDATE crawl_jobs config"]
     G3["5c. Schedule next run<br/>n8n cron trigger<br/>Daily: API sources<br/>Weekly: Deep crawl G2/Capterra<br/>Monthly: Full re-scan all"]
     
@@ -205,8 +212,13 @@ graph TD
 | **Indie Hackers** | Startup community | Revenue reports, pain-points, "I built X" | Scrapling Spider |
 | **DEV.to** | Developer blogging | Tutorials, complaints, feature wishes | Scrapling Spider |
 | **Lobste.rs** | Tech link aggregation | Invite-only, high signal-to-noise | Lightpanda |
-| **G2 Reviews** | Software reviews | 2-3 star reviews = pure gold pain-points | Crawl4AI (Anti-Bot 3 tầng) |
-| **Capterra** | Software reviews | "Cons" section = pain-point trực tiếp | Crawl4AI (Anti-Bot) |
+
+#### 📊 Review Platforms (Heavy Crawler — cần Crawl4AI + proxy)
+
+| Site | Loại | Dữ liệu giá trị | Crawl Tool | Ghi chú |
+|:---|:---|:---|:---|:---|
+| **G2 Reviews** | Software reviews | 2-3 star reviews = pure gold pain-points | Crawl4AI (Anti-Bot 3 tầng) | Cần residential proxy |
+| **Capterra** | Software reviews | "Cons" section = pain-point trực tiếp | Crawl4AI (Anti-Bot) | Cần residential proxy |
 
 #### 🇨🇳 China
 
@@ -336,6 +348,7 @@ CREATE TABLE opportunities (
     est_build_time  VARCHAR(50),             -- '2 weeks', '1 month'
     est_pricing     VARCHAR(50),             -- '$5/mo', '$9/mo'
     confidence      FLOAT,                   -- 0.0 - 1.0
+    compliance_status VARCHAR(20) DEFAULT 'pending', -- 'compliant', 'risk_flagged', 'pending'
     created_at      TIMESTAMP DEFAULT NOW()
 );
 
@@ -355,10 +368,35 @@ CREATE TABLE crawl_jobs (
 -- System metrics (cho dashboard monitoring)
 CREATE TABLE metrics (
     id              SERIAL PRIMARY KEY,
-    metric_name     VARCHAR(100),            -- 'crawl_success_rate', 'new_painpoints_week'
+    metric_name     VARCHAR(100),            -- 'crawl_success_rate', 'new_painpoints_week', 'pipeline_duration_ms'
     metric_value    FLOAT,
     source          VARCHAR(50),
     recorded_at     TIMESTAMP DEFAULT NOW()
+);
+
+-- LLM call audit trail (partitioned by month, auto-purge prompt/response sau 30 ngày)
+CREATE TABLE llm_calls (
+    id          SERIAL PRIMARY KEY,
+    step        VARCHAR(20),                 -- '2a', '4b', '4e'...
+    raw_id      INTEGER REFERENCES raw_data(id),  -- truy vết nguồn dữ liệu
+    model_name  VARCHAR(100),                -- 'qwen3.5-27b', 'gemma-4-12b'
+    model_hash  VARCHAR(64),                 -- SHA-256 model file (để reproduce)
+    prompt      TEXT,                        -- auto-purge sau 30 ngày (xem retention policy)
+    response    JSONB,                       -- auto-purge sau 30 ngày
+    tokens_in   INTEGER,
+    tokens_out  INTEGER,
+    duration_ms INTEGER,
+    created_at  TIMESTAMP DEFAULT NOW()
+) PARTITION BY RANGE (created_at);
+
+-- Cluster score time-series cho Dashboard /trends
+CREATE TABLE cluster_scores_snapshot (
+    id              SERIAL PRIMARY KEY,
+    cluster_id      INTEGER REFERENCES clusters(id),
+    recorded_at     TIMESTAMP DEFAULT NOW(),
+    frequency       INTEGER,
+    engagement      INTEGER,
+    opportunity_score FLOAT
 );
 ```
 
@@ -382,6 +420,9 @@ graph TD
     CL -->|"Analysis"| OP["opportunities"]
     OP -->|"Query"| Dash["🌐 Web Dashboard<br/>(FastAPI reads DB realtime)"]
     CL -->|"Feedback"| CJ["crawl_jobs<br/>(adjust config)"]
+    LLM["🧠 Ollama"] -->|Audit trail| LC["llm_calls<br/>(partitioned, auto-purge 30d)"]
+    CL -->|"Snapshot"| CSS["cluster_scores_snapshot<br/>(time-series for /trends)"]
+    OP -->|"Compliance"| CF["compliance_status filter<br/>(default: show compliant only)"]
 ```
 
 ---
@@ -460,6 +501,7 @@ graph TD
 | **32GB+** | Nemotron Nano 4B (4GB) | Nomic Embed v2 (1GB) | **Qwen3.5-27B** (20GB) | Ministral 8B (6GB) | ~20GB + song song |
 
 > **Nguyên tắc**: Ollama load/unload tự động. Pipeline chạy tuần tự nên chỉ cần RAM cho model lớn nhất đang active.
+> **Model Router** (Sprint 2): Kiểm tra RAM available từ host → tự chọn model. Host-side health endpoint expose `psutil.virtual_memory().available` cho container Ollama đọc qua `host.docker.internal:12345/ram`. Nếu host < 16GB → dùng Gemma 4-12B thay Qwen3.5-27B cho bước 4b/4c.
 
 ---
 
@@ -470,6 +512,12 @@ graph TD
 | **n8n** | Orchestration | Scheduling (cron), routing, notifications, visual debugging | 400+ integrations, Canvas UI, self-hosted |
 | **OpenClaw** | Execution | Chạy crawl scripts, gọi Ollama, write DB, generate reports | Persistent daemon, 100+ skills, model-agnostic |
 | **Paperclip** | *Deferred* | Multi-agent management | Chỉ cần khi scale lên nhiều agents |
+
+> **Trigger đánh giá Paperclip** (log `pipeline_duration_ms` vào bảng `metrics`):
+> - LLM calls/ngày > 1,000 (pipeline chạy > 2 giờ/lần)
+> - Crawl sources > 20 platforms
+> - Pipeline end-to-end time > 4 giờ (từ Step 1 trigger đến Step 5 hoàn tất)
+> - Cần chạy song song nhiều pipeline instances (VD: 1 cho English, 1 cho Chinese)
 
 ```mermaid
 graph TD
@@ -564,6 +612,9 @@ graph TD
 - [ ] Implement dedup (Nomic Embed v2 → ChromaDB → cosine similarity)
 - [ ] Implement pain-point extractor (Nemotron Nano 4B)
 - [ ] Implement HDBSCAN clustering + labeling + scoring
+- [ ] **Model Router** (Sprint 2): Host RAM check → tự chọn Qwen3.5-27B hoặc Gemma 4-12B cho bước 4b/4c
+- [ ] Implement `llm_calls` table (partitioned by month, auto-purge prompt/response sau 30 ngày)
+- [ ] Implement `cluster_scores_snapshot` table + auto-insert sau mỗi pipeline run
 - [ ] Verify: silhouette > 0.5, spot-check labels
 
 **Done khi**: raw_data → clusters có scores hợp lý tự động.
@@ -572,9 +623,10 @@ graph TD
 
 **Mục tiêu**: Phân tích cơ hội + Web Dashboard realtime.
 
-- [ ] Implement competitor search + analysis (Qwen3.5-27B)
-- [ ] Implement MVP suggestion generator (Qwen3.5-27B)
+- [ ] Implement competitor search + analysis (Qwen3.5-27B / Gemma 4-12B qua Model Router)
+- [ ] Implement MVP suggestion generator (Qwen3.5-27B / Gemma 4-12B qua Model Router)
 - [ ] Implement structured report writer (Ministral 8B → opportunities table)
+- [ ] **Step 4e Compliance Check** (Nemotron Nano 4B): Flag idea vi phạm security/legal trước khi INSERT opportunities
 - [ ] Build FastAPI + HTMX Web Dashboard (§3.2): Dashboard, Opportunities, Cluster Detail, Sources, Trends
 - [ ] Implement feedback loop: adjust keywords/sources dựa trên metrics
 - [ ] n8n: weekly trigger → full pipeline → Telegram notification
@@ -656,4 +708,5 @@ graph TD
 | 7.0.0 | 2026-04-21 | Antigravity | Tối ưu cho AI Agent. Loại SaaS trả phí. Chi phí $20/tháng. |
 | 8.0.0 | 2026-04-21 | Antigravity | Database-first. LLM Stack 8 models. Data Sources 20+. OpenClaw + n8n. |
 | 8.1.0 | 2026-04-21 | Antigravity | Sửa 10 mâu thuẫn nội bộ. Normalization scoring. Operational safeguards. |
+| — | — | — | **─── Rewrite boundary: v9+ là cấu trúc hiện hành ───** |
 | 9.0.0 | 2026-04-21 | Antigravity | **Tái cấu trúc toàn diện document + Web Dashboard**: **(1) Cấu trúc mới**: Đưa Pipeline (5 Steps) lên đầu thành Section 1 — trọng tâm của document. Gom toàn bộ hạ tầng (DB, Web Dashboard, Crawlers, LLMs, Orchestration) vào Section 3. Loại bỏ hoàn toàn duplicate (tool/LLM assignments chỉ xuất hiện 1 lần, inline trong step diagrams). Giảm từ 9 sections → 5 sections + Appendix. Reader flow: "cái gì" (pipeline) → "data từ đâu" (sources) → "tool nào" (tech stack) → "bao nhiêu tiền" (vận hành) → "khi nào" (roadmap). **(2) Web Dashboard thay file reports**: Loại bỏ hoàn toàn `reports` table (markdown content) — thay bằng `opportunities` table structured JSONB. Thêm Section 3.2 Web Dashboard: FastAPI + HTMX + Chart.js, 6 pages (Dashboard, Opportunities, Cluster Detail, Sources, Trends, API). Realtime via HTMX poll/SSE. Export on-demand (CSV/Markdown) thay vì generate file định kỳ. Step 5 output → Web Dashboard thay vì ideas.md. **(3) DB schema update**: Xóa `reports` table. Mở rộng `opportunities` table: thêm `competitors JSONB`, `mvp_name`, `mvp_description`, `core_features JSONB`, `tech_stack JSONB`, `confidence FLOAT`. Thêm `config JSONB` vào `crawl_jobs` cho feedback loop. **(4) Appendix mở rộng**: Di chuyển ma trận so sánh crawlers và hybrid orchestration comparison vào Appendix — giữ main document lean, dễ đọc. |
